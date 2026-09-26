@@ -1,0 +1,9 @@
+{$DEV_HOST:localhost} {
+    handle /api/* {
+        reverse_proxy app:4000
+    }
+
+    handle {
+        reverse_proxy app:5173
+    }
+}

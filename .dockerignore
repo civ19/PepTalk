@@ -1,0 +1,12 @@
+.git
+.gitignore
+**/node_modules
+**/dist
+**/coverage
+**/*.log
+.env
+.env.*
+!.env.example
+PrepTalk/
+data/
+.DS_Store
