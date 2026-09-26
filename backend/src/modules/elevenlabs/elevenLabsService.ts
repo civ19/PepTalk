@@ -1,5 +1,5 @@
 export class ElevenLabsService {
-  async synthesizeSpeech(text: string) {
-    return Buffer.from('mock-audio-data');
+  async synthesizeSpeech(_text: string) {
+    return Buffer.from("mock-audio-data");
   }
 }

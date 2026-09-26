@@ -1,5 +1,5 @@
 export class StorageService {
-  async saveVideo(sessionId: string, stream: any) {
-    return f"/data/videos/{sessionId}.webm";
+  async saveVideo(sessionId: string, _stream: unknown) {
+    return `/data/videos/${sessionId}.webm`;
   }
 }
