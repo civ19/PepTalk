@@ -282,6 +282,7 @@ export default function App() {
   const sessionsRef = useRef(sessions);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
+  const [recordingLoading, setRecordingLoading] = useState(false);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<PracticeCategory>("Presentation");
   const [isRecording, setIsRecording] = useState(false);
@@ -343,20 +344,26 @@ export default function App() {
   useEffect(() => {
     if (!selected?.hasRecording) {
       setRecordingUrl(null);
+      setRecordingLoading(false);
       return;
     }
     let active = true;
     let url: string | null = null;
+    setRecordingLoading(true);
     getRecording(selected.id)
       .then((blob) => {
         if (active && blob) {
           url = URL.createObjectURL(blob);
           setRecordingUrl(url);
         }
+        if (active) setRecordingLoading(false);
       })
-      .catch(() =>
-        setStatus("The recording could not be opened from browser storage."),
-      );
+      .catch(() => {
+        if (active) {
+          setRecordingLoading(false);
+          setStatus("The recording could not be opened from browser storage.");
+        }
+      });
     return () => {
       active = false;
       if (url) URL.revokeObjectURL(url);
@@ -374,8 +381,8 @@ export default function App() {
   );
 
   function navigate(next: Page) {
-    if (isRecording && next !== "practice") {
-      setStatus("Finish this recording before leaving the studio.");
+    if ((isRecording || isSaving) && next !== "practice") {
+      setStatus("Finish saving this recording before leaving the studio.");
       return;
     }
     setPage(next);
@@ -383,12 +390,12 @@ export default function App() {
     setStatus("");
   }
 
-  function openSession(id: string) {
+  function openSession(id: string, preserveStatus = false) {
     setSelectedId(id);
     const session = sessionsRef.current.find((item) => item.id === id);
     setDraftTranscript(session?.transcript ?? "");
     setPage("history");
-    setStatus("");
+    if (!preserveStatus) setStatus("");
   }
 
   function updateTranscript(value: string) {
@@ -496,7 +503,7 @@ export default function App() {
       commitSessions([session, ...sessionsRef.current]);
       setIsSaving(false);
       setTitle("");
-      openSession(id);
+      openSession(id, true);
     };
     const Speech = getSpeechConstructor();
     if (Speech) {
@@ -1120,8 +1127,9 @@ export default function App() {
                       <strong>~60s warm-up</strong>
                     </div>
                     <p>
-                      Also planned: expression tracking, breathing and arterial
-                      waveforms, confidence scores, and measurement stability.
+                      Also planned: expression tracking, breathing and relative
+                      arterial waveforms, confidence scores (0–100), and
+                      measurement stability.
                     </p>
                   </section>
                   <section className="tip-card">
@@ -1193,7 +1201,9 @@ export default function App() {
                           <Icon name="video" size={27} />
                           <span>
                             {selected.hasRecording
-                              ? "Loading recording…"
+                              ? recordingLoading
+                                ? "Loading recording…"
+                                : "Recording unavailable in this browser."
                               : "Video was not saved for this session."}
                           </span>
                         </div>

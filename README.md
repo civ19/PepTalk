@@ -56,7 +56,7 @@ sequenceDiagram
     API-->>Camera: Session insights
 ```
 
-Planned body signals include pulse (~12-second warm-up), breathing (~30 seconds), HRV (~60 seconds), waveforms, expression, confidence scores, and stability flags. The browser UI labels these as planned. Auth0/Google login, Gemini coaching, ElevenLabs, and Tiger Data persistence are also still integration work. The current Express route returns a placeholder session ID and does not store a recording. Use a server-side credential or supported OAuth flow for Presage; do not put an API key in Vite client environment variables.
+Planned body signals include pulse (~12-second warm-up), breathing (~30 seconds), HRV (~60 seconds), breathing and relative arterial-pressure waveforms, expression, confidence scores (0–100), and stability flags. The browser UI labels these as planned. Auth0/Google login, Gemini coaching, ElevenLabs, and Tiger Data persistence are also still integration work. The current Express route returns a placeholder session ID and does not store a recording. Use a server-side credential or supported OAuth flow for Presage; do not put an API key in Vite client environment variables.
 
 ## Checks
 
