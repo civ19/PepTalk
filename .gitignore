@@ -1,0 +1,5 @@
+node_modules/
+presage-playground/dist/
+.env
+.env.*
+!.env.example
