@@ -6,6 +6,7 @@
 import {
   BREATHING_MAX_TALKING_FRACTION,
   BREATHING_WINDOW_MS,
+  GAZE,
   MIN_VITALS_CONFIDENCE,
   TIMELINE_BUCKET_MS,
 } from './constants';
@@ -13,6 +14,7 @@ import type {
   DetectionReading,
   ExpressionName,
   ExpressionWindow,
+  GazeDirection,
   HrvReading,
   Interval,
   MetricGroup,
@@ -50,6 +52,7 @@ export interface SessionData {
   blinking: DetectionReading[];
   talking: DetectionReading[];
   expressions: { tUs: number; top: ExpressionName | null }[];
+  gaze: { tUs: number; direction: GazeDirection }[];
   validation: ValidationEvent[];
   groupsSeen: ReadonlySet<MetricGroup>;
   firstSdkTimestampUs: number | null;
@@ -101,6 +104,7 @@ export class SessionRecorder {
       blinking: [],
       talking: [],
       expressions: [],
+      gaze: [],
       validation: [],
       groupsSeen: this.groupsSeen,
       firstSdkTimestampUs: null,
@@ -118,6 +122,7 @@ export class SessionRecorder {
     this.append('hrv', d.hrv, sample.hrv);
     this.append('blinking', d.blinking, sample.blinking);
     this.append('talking', d.talking, sample.talking);
+    this.append('gaze', d.gaze, sample.gaze ? [{ tUs: sample.gaze.tUs, direction: sample.gaze.direction }] : []);
     this.append(
       'expressions',
       d.expressions,
@@ -209,14 +214,14 @@ interface Segment {
 }
 
 /** Turns per-frame detections into held segments (each capped at DETECTION_MAX_HOLD_MS). */
-function detectionSegments(readings: readonly { tMs: number; on: boolean }[], endMs: number): Segment[] {
-  const out: Segment[] = [];
+function detectionSegments<R extends { tMs: number; on: boolean }>(readings: readonly R[], endMs: number): (Segment & { reading: R })[] {
+  const out: (Segment & { reading: R })[] = [];
   for (let i = 0; i < readings.length; i++) {
     const cur = readings[i];
     if (!cur) continue;
     const next = readings[i + 1];
     const stop = Math.min(next ? next.tMs : endMs, cur.tMs + DETECTION_MAX_HOLD_MS, endMs);
-    if (stop > cur.tMs) out.push({ startMs: cur.tMs, endMs: stop, on: cur.on });
+    if (stop > cur.tMs) out.push({ startMs: cur.tMs, endMs: stop, on: cur.on, reading: cur });
   }
   return out;
 }
@@ -236,15 +241,15 @@ function mergeIntervals(segs: readonly Segment[], gapMs: number): Interval[] {
   return out;
 }
 
-function shareOf(counts: Map<ExpressionName, number>, total: number): Partial<Record<ExpressionName, number>> {
-  const out: Partial<Record<ExpressionName, number>> = {};
+function shareOf<K extends string>(counts: Map<K, number>, total: number): Partial<Record<K, number>> {
+  const out: Partial<Record<K, number>> = {};
   if (total === 0) return out;
   for (const [name, n] of [...counts.entries()].sort((a, b) => b[1] - a[1])) out[name] = round3(n / total);
   return out;
 }
 
-function dominant(counts: Map<ExpressionName, number>): ExpressionName | null {
-  let best: ExpressionName | null = null;
+function dominant<K>(counts: Map<K, number>): K | null {
+  let best: K | null = null;
   let bestN = 0;
   for (const [name, n] of counts) {
     if (n > bestN) {
@@ -325,6 +330,42 @@ export function summarizeSession(d: SessionData): SessionSummary {
       n++;
     }
     return { ...b, dominant: dominant(counts), distribution: shareOf(counts, n), samples: n };
+  });
+
+  // --- Gaze ----------------------------------------------------------------
+  // "on" = looking away, so mergeIntervals() yields look-away stretches.
+  type AwayDirection = Exclude<GazeDirection, 'camera'>;
+  const gazeSegs = detectionSegments(
+    d.gaze.map((r) => ({ tMs: toMs(r.tUs), on: r.direction !== 'camera', direction: r.direction })),
+    durationMs,
+  );
+  const gazeObservedMs = gazeSegs.reduce((acc, s) => acc + (s.endMs - s.startMs), 0);
+  const awayByDirection = new Map<AwayDirection, number>();
+  for (const s of gazeSegs) {
+    const dir = s.reading.direction;
+    if (dir !== 'camera') awayByDirection.set(dir, (awayByDirection.get(dir) ?? 0) + (s.endMs - s.startMs));
+  }
+  const awayMs = [...awayByDirection.values()].reduce((a, b) => a + b, 0);
+  const lookAways = mergeIntervals(gazeSegs, GAZE.lookAwayMergeGapMs)
+    .filter((i) => i.endMs - i.startMs >= GAZE.minLookAwayMs)
+    .flatMap((i) => {
+      const byDir = new Map<AwayDirection, number>();
+      for (const s of gazeSegs) {
+        const dir = s.reading.direction;
+        if (dir !== 'camera') byDir.set(dir, (byDir.get(dir) ?? 0) + overlapMs(s, i.startMs, i.endMs));
+      }
+      const direction = dominant(byDir);
+      return direction ? [{ ...i, direction }] : [];
+    });
+  const gazeTimeline = bucketList.map((b) => {
+    let seen = 0;
+    let onCamera = 0;
+    for (const s of gazeSegs) {
+      const o = overlapMs(s, b.startMs, b.endMs);
+      seen += o;
+      if (!s.on) onCamera += o;
+    }
+    return { ...b, eyeContactRatio: seen > 0 ? round3(onCamera / seen) : null };
   });
 
   // --- Face validity + validation issues -----------------------------------
@@ -410,6 +451,21 @@ export function summarizeSession(d: SessionData): SessionSummary {
       count: onsetsMs.length,
       perMinute: blinkObservedMs >= MIN_BLINK_OBSERVATION_MS ? round1(onsetsMs.length / (blinkObservedMs / 60_000)) : null,
       onsetsMs,
+    },
+    gaze: {
+      eyeContactRatio: gazeObservedMs > 0 ? round3((gazeObservedMs - awayMs) / gazeObservedMs) : null,
+      onCameraMs: gazeObservedMs - awayMs,
+      observedMs: gazeObservedMs,
+      awayDirections: shareOf(awayByDirection, awayMs),
+      lookAways,
+      longestLookAwayMs: lookAways.reduce((m, i) => Math.max(m, i.endMs - i.startMs), 0),
+      timeline: gazeTimeline,
+      note:
+        'Estimated from face landmarks: iris position between the eye corners, corrected for head turn. ' +
+        '"Camera" means looking roughly at the lens; looking at the screen below a webcam may read as "down". ' +
+        'Directions are from the person\'s own perspective. Vertical is less precise than horizontal. ' +
+        `Look-aways shorter than ${GAZE.minLookAwayMs} ms are glances and are not listed, but they still count against eyeContactRatio. ` +
+        'Frames with the eyes closed (blinks) have no gaze reading.',
     },
     talking: {
       ratio: talkObservedMs > 0 ? round3(talkingMs / talkObservedMs) : null,

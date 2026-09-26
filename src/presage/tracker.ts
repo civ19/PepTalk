@@ -11,6 +11,7 @@ import {
 } from '@smartspectra/node-sdk/renderer';
 import { CARDIO_EXTRA_GRACE_MS, EMPTY_GROUP_WARNING_MS } from './constants';
 import { decodePacket } from './decode';
+import { estimateGaze } from './gaze';
 import { REQUESTED_METRICS } from './metrics';
 import { SessionRecorder, type PersistFn, type RecordedSession } from './sessionRecorder';
 import type {
@@ -352,7 +353,13 @@ class Tracker implements PresageTracker {
       }
       return;
     }
-    const sample: PresageSample = { tUs, tMs: this.recorder.toSessionMs(tUs), ...result.packet };
+    const { landmarks } = result.packet;
+    const sample: PresageSample = {
+      tUs,
+      tMs: this.recorder.toSessionMs(tUs),
+      ...result.packet,
+      gaze: landmarks ? estimateGaze(landmarks) : null,
+    };
     for (const g of REQUESTED_GROUPS) {
       if (!sample.groups[g] || this.groupsSeen.has(g)) continue;
       this.groupsSeen.add(g);

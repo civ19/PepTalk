@@ -17,6 +17,7 @@ function sample(partial: Partial<PresageSample> & { at: number }): PresageSample
     talking: [],
     expressions: [],
     landmarks: null,
+    gaze: null,
     groups: { face: false, cardio: false, breathing: false },
     ...rest,
   };
@@ -95,6 +96,22 @@ describe('SessionRecorder', () => {
     expect(summary.series.breathing.map((b) => b.excludedWhileTalking)).toEqual([true, false]);
     expect(summary.talking.ratio).toBeCloseTo(1 / 3, 2);
     expect(summary.talking.intervals).toEqual([{ startMs: 0, endMs: 30_000 }]);
+  });
+
+  it('summarizes eye contact, look-aways and their directions', async () => {
+    const { rec, finish } = recorderAt(20_000);
+    for (let t = 0; t < 20_000; t += 100) {
+      // A 2.5 s look down, plus a 0.3 s glance left that is too short to list.
+      const direction = t >= 10_000 && t < 12_500 ? 'down' : t >= 5_000 && t < 5_300 ? 'left' : 'camera';
+      rec.addSample(sample({ at: t, gaze: { tUs: us(t), h: 0, v: 0, direction } }));
+    }
+    const { summary } = await finish();
+    expect(summary.gaze.observedMs).toBe(20_000);
+    expect(summary.gaze.eyeContactRatio).toBe(0.86);
+    expect(summary.gaze.lookAways).toEqual([{ startMs: 10_000, endMs: 12_500, direction: 'down' }]);
+    expect(summary.gaze.longestLookAwayMs).toBe(2_500);
+    expect(summary.gaze.awayDirections).toEqual({ down: 0.893, left: 0.107 });
+    expect(summary.gaze.timeline.map((b) => b.eyeContactRatio)).toEqual([0.97, 0.75]);
   });
 
   it('counts blink onsets and normalizes per observed minute', async () => {

@@ -33,3 +33,24 @@ export const EMPTY_GROUP_WARNING_MS = 15_000;
  * first reading arrived ~16 s after Running, so 15 s would always false-alarm.
  */
 export const CARDIO_EXTRA_GRACE_MS = 10_000;
+
+/**
+ * Gaze / eye-contact tunables (see gaze.ts). Offsets are in eye widths, so they
+ * don't depend on how far the person sits from the camera. The defaults are
+ * geometric estimates, not fitted to data: loosen them if normal eye contact
+ * reads as "away", tighten them if glancing at notes reads as "camera".
+ */
+export const GAZE = {
+  /** |horizontal offset| at or below this counts as looking at the camera. */
+  maxCameraH: 0.08,
+  /** |vertical offset| at or below this counts as looking at the camera. */
+  maxCameraV: 0.07,
+  /** Head-turn compensation: how much of the normalized nose offset is added to the iris offset. */
+  headYawWeight: 0.4,
+  /** Lid gap / eye width below this is treated as a blink: no gaze reading. */
+  minEyeOpenness: 0.12,
+  /** Off-camera stretches shorter than this are glances, not listed as look-aways. */
+  minLookAwayMs: 1_000,
+  /** On-camera blips shorter than this don't split a look-away in two. */
+  lookAwayMergeGapMs: 300,
+} as const;

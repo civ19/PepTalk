@@ -2,7 +2,7 @@
 
 A self-contained [SmartSpectra](https://smartspectra.presagetech.com/docs/nodejs) (Presage) module for the interview/presentation practice app. While the user practices, it reads face and wellness signals from the webcam and records a timestamped session summary. Later, an LLM will combine that summary with the speech transcript.
 
-It includes a small demo window: live preview, a face-landmark overlay, pulse, breathing, HRV, blink and talking indicators, top expression, positioning hints, and errors.
+It includes a small demo window: live preview, a face-landmark overlay, pulse, breathing, HRV, blink and talking indicators, eye contact (gaze direction), top expression, positioning hints, and errors.
 
 > Wellness signals only. Nothing here is a health measurement, and the UI and JSON avoid medical vocabulary on purpose.
 
@@ -73,7 +73,7 @@ const tracker = createPresageTracker({
 });
 window.presageHost?.onShutdownRequest(async () => { await tracker.shutdown(); });
 
-tracker.onSample((s) => { /* PresageSample: pulse, breathing, hrv, blinking, talking, expressions, landmarks */ });
+tracker.onSample((s) => { /* PresageSample: pulse, breathing, hrv, blinking, talking, expressions, landmarks, gaze */ });
 tracker.onValidation((v) => { /* v.advice, e.g. "Move closer"; v.hint is the SDK's text */ });
 tracker.onError((e) => { /* show it */ });
 tracker.onWarning((w) => { /* metric group empty / recovered */ });
@@ -131,6 +131,7 @@ It also posts a "recovered" note if data shows up later.
     "samplesUsed": 2, "samplesDroppedLowConfidence": 1, "minConfidence": 50, "note": "HRV uses a 60 s window …"
   },
   "blinks":   { "count": 13, "perMinute": 10.8, "onsetsMs": [12232, 14201, …] },
+  "gaze":     { "eyeContactRatio": 0.82, "lookAways": [{ "startMs": 41200, "endMs": 44900, "direction": "down" }, …], "awayDirections": { "down": 0.7, "left": 0.3 }, … },
   "talking":  { "ratio": 0.42, "talkingMs": 30300, "observedMs": 72083, "intervals": [{ "startMs": 8041, "endMs": 11193 }, …] },
   "expressions": {
     "distribution": { "neutral": 0.705, "surprise": 0.199, "happy": 0.037, … },   // share of readings where each was top

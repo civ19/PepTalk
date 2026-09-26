@@ -150,6 +150,9 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 .dot.on { background: var(--accent); border-color: var(--accent); }
 
+#gaze-tile[data-gaze='camera'] .sub { color: var(--ok); }
+#gaze-tile[data-gaze='away'] .sub { color: var(--warn); }
+
 .warnings .banner { margin-top: 0; font-size: 13px; }
 
 .summary { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }

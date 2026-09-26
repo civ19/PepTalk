@@ -3,8 +3,10 @@
 
 import './styles.css';
 import {
+  classifyGaze,
   createPresageTracker,
   MIN_VITALS_CONFIDENCE,
+  type GazeDirection,
   type LandmarksReading,
   type PresageError,
   type PresageSample,
@@ -37,6 +39,9 @@ const ui = {
   blinkDot: $('blink-dot'),
   blinkCount: $('blink-count'),
   talkDot: $('talk-dot'),
+  gazeTile: $('gaze-tile'),
+  eyeContact: $('eye-contact'),
+  gazeDir: $('gaze-dir'),
   expression: $('expression'),
   expressionConf: $('expression-conf'),
   warnings: $('warnings'),
@@ -135,7 +140,10 @@ function clearOverlay(): void {
   ctx?.clearRect(0, 0, ui.overlay.width, ui.overlay.height);
 }
 
-function drawLandmarks(lm: LandmarksReading): void {
+// MediaPipe iris points (468-472 and 473-477), highlighted on top of the mesh.
+const IRIS_FIRST = 468;
+
+function drawLandmarks(lm: LandmarksReading, gaze: GazeDirection | null): void {
   if (!ctx || lm.points.length === 0) return;
   const w = ui.overlay.width;
   const h = ui.overlay.height;
@@ -152,6 +160,14 @@ function drawLandmarks(lm: LandmarksReading): void {
     ctx.arc(p.x * sx, p.y * sy, r, 0, Math.PI * 2);
     ctx.fill();
   }
+  if (gaze !== null) {
+    ctx.fillStyle = gaze === 'camera' ? 'rgba(52, 211, 153, 1)' : 'rgba(251, 146, 60, 1)';
+    for (const p of lm.points.slice(IRIS_FIRST)) {
+      ctx.beginPath();
+      ctx.arc(p.x * sx, p.y * sy, r * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
   if (landmarkClearTimer !== null) clearTimeout(landmarkClearTimer);
   landmarkClearTimer = window.setTimeout(clearOverlay, 500);
 }
@@ -162,6 +178,21 @@ function drawLandmarks(lm: LandmarksReading): void {
 let blinkCount = 0;
 let lastBlink = false;
 let talkingNow = false;
+// Eye contact: share of gaze readings on camera, plus a smoothed live direction
+// so the label doesn't flicker on landmark jitter.
+const GAZE_SMOOTHING = 0.3;
+let gazeReadings = 0;
+let gazeOnCamera = 0;
+let smoothGaze: { h: number; v: number } | null = null;
+let liveGaze: GazeDirection | null = null;
+
+const GAZE_LABEL: Record<GazeDirection, string> = {
+  camera: 'looking at the camera',
+  left: 'looking to your left',
+  right: 'looking to your right',
+  up: 'looking up',
+  down: 'looking down',
+};
 
 function setReading(valueEl: HTMLElement, subEl: HTMLElement, value: number, confidence: number, min: number, digits = 0): void {
   valueEl.textContent = value.toFixed(digits);
@@ -200,7 +231,19 @@ function onSample(s: PresageSample): void {
     ui.expressionConf.textContent = `${Math.round(expr.topConfidence)}%`;
   }
 
-  if (s.landmarks) drawLandmarks(s.landmarks);
+  if (s.gaze) {
+    gazeReadings++;
+    if (s.gaze.direction === 'camera') gazeOnCamera++;
+    smoothGaze = smoothGaze
+      ? { h: smoothGaze.h + GAZE_SMOOTHING * (s.gaze.h - smoothGaze.h), v: smoothGaze.v + GAZE_SMOOTHING * (s.gaze.v - smoothGaze.v) }
+      : { h: s.gaze.h, v: s.gaze.v };
+    liveGaze = classifyGaze(smoothGaze.h, smoothGaze.v);
+    ui.eyeContact.textContent = String(Math.round((gazeOnCamera / gazeReadings) * 100));
+    ui.gazeDir.textContent = GAZE_LABEL[liveGaze];
+    ui.gazeTile.dataset['gaze'] = liveGaze === 'camera' ? 'camera' : 'away';
+  }
+
+  if (s.landmarks) drawLandmarks(s.landmarks, liveGaze);
 }
 
 tracker.onSample(onSample);
@@ -234,7 +277,7 @@ tracker.onWarning((w) => {
 // Session controls
 
 function resetPanel(): void {
-  for (const el of [ui.pulse, ui.breathing, ui.hrv, ui.expression]) {
+  for (const el of [ui.pulse, ui.breathing, ui.hrv, ui.expression, ui.eyeContact]) {
     el.textContent = '--';
     el.parentElement?.classList.remove('low');
   }
@@ -245,6 +288,12 @@ function resetPanel(): void {
   blinkCount = 0;
   lastBlink = false;
   talkingNow = false;
+  gazeReadings = 0;
+  gazeOnCamera = 0;
+  smoothGaze = null;
+  liveGaze = null;
+  ui.gazeDir.textContent = 'waiting for face';
+  delete ui.gazeTile.dataset['gaze'];
   ui.blinkCount.textContent = '0';
   ui.talkDot.classList.remove('on');
   ui.warnings.replaceChildren();

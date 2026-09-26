@@ -61,6 +61,19 @@ export interface LandmarksReading {
   reset: boolean;
 }
 
+/** Where the person is looking, from their own perspective ('left' = their left). */
+export type GazeDirection = 'camera' | 'left' | 'right' | 'up' | 'down';
+
+/** Gaze estimate derived from one landmark set (see gaze.ts). */
+export interface GazeReading {
+  tUs: number;
+  /** Horizontal offset in eye widths, head turn included. Positive = toward the person's left. */
+  h: number;
+  /** Vertical offset in eye widths. Positive = down. */
+  v: number;
+  direction: GazeDirection;
+}
+
 /** Which requested metric groups carried any data in a metrics packet. */
 export interface GroupPresence {
   face: boolean;
@@ -85,6 +98,8 @@ export interface PresageSample {
   expressions: ExpressionReading[];
   /** Latest landmark set in this packet, if any (older sets in the same packet are dropped). */
   landmarks: LandmarksReading | null;
+  /** Gaze estimated from `landmarks`; null without landmarks, mid-blink, or if the layout isn't recognized. */
+  gaze: GazeReading | null;
   groups: GroupPresence;
 }
 
@@ -210,6 +225,20 @@ export interface SessionSummary {
     perMinute: number | null;
     /** Session-relative ms of each blink onset. */
     onsetsMs: number[];
+  };
+  gaze: {
+    /** Fraction of observed gaze time spent looking at the camera. */
+    eyeContactRatio: number | null;
+    onCameraMs: number;
+    observedMs: number;
+    /** Share of off-camera time per direction (sums to ~1). */
+    awayDirections: Partial<Record<Exclude<GazeDirection, 'camera'>, number>>;
+    /** Off-camera stretches long enough to be more than a glance. */
+    lookAways: (Interval & { direction: Exclude<GazeDirection, 'camera'> })[];
+    longestLookAwayMs: number;
+    /** Per-10s windows. */
+    timeline: (Interval & { eyeContactRatio: number | null })[];
+    note: string;
   };
   talking: {
     ratio: number | null;
