@@ -1,0 +1,36 @@
+{
+  "name": "preptalk-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PrepTalk - AI Conversational Interview Coach",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "prepare": "node scripts/install-hooks.mjs",
+    "dev": "concurrently -n BACKEND,FRONTEND -c cyan,magenta \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "lint": "eslint \"backend/src/**/*.ts\" \"backend/test/**/*.ts\" \"frontend/src/**/*.{ts,tsx}\" \"frontend/test/**/*.{ts,tsx}\"",
+    "format": "prettier --write \"backend/{src,test}/**/*.ts\" \"frontend/{src,test}/**/*.{ts,tsx,css}\" \"README.md\"",
+    "format:check": "prettier --check \"backend/{src,test}/**/*.ts\" \"frontend/{src,test}/**/*.{ts,tsx,css}\" \"README.md\"",
+    "test": "vitest run",
+    "sanity": "npm run lint && npm run format:check && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.19.0",
+    "@types/node": "^22.13.0",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.19.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.18",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.22.0",
+    "vitest": "^3.0.4"
+  }
+}
