@@ -1,0 +1,10 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'Frontend dev server not configured yet'",
+    "build": "echo 'Frontend build not configured yet'",
+    "test": "echo 'Frontend test not configured yet'"
+  }
+}
