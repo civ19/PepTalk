@@ -1,0 +1,167 @@
+# Presage vitals module
+
+A self-contained [SmartSpectra](https://smartspectra.presagetech.com/docs/nodejs) (Presage) module for the interview/presentation practice app. While the user practices, it reads face and wellness signals from the webcam and records a timestamped session summary. Later, an LLM will combine that summary with the speech transcript.
+
+It includes a small demo window: live preview, a face-landmark overlay, pulse, breathing, HRV, blink and talking indicators, top expression, positioning hints, and errors.
+
+> Wellness signals only. Nothing here is a health measurement, and the UI and JSON avoid medical vocabulary on purpose.
+
+## Setup
+
+Requirements: **Node.js 20+** (24 LTS recommended), Windows x64, macOS arm64 or Linux x64/arm64 (glibc 2.35+).
+
+```bash
+npm install
+cp .env.example .env      # then paste your key into .env
+```
+
+`npm install` downloads the SmartSpectra native runtime for **every** platform (a few hundred MB). This is normal: only the package matching your machine is loaded. npm 11 prints an `allow-scripts` warning for `koffi` and `protobufjs`. You can ignore it, because koffi ships prebuilt binaries and loads fine without its install script.
+
+### Environment variables
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `PRESAGE_API_KEY` | yes | SmartSpectra API key from <https://physiology.presagetech.com/>. The main process reads it at runtime from the environment or from `.env` in the app directory. It is never bundled. The renderer requests it over IPC (the renderer SDK needs it). |
+| `SMARTSPECTRA_DIAGNOSTICS` | no | `1` turns on the SDK's verbose IPC/frame-pump logging. |
+| `SMARTSPECTRA_CAPI_PATH` | no | Overrides where the native library is loaded from. Packaged builds set this automatically to `resources/smartspectra/`. |
+
+`.env` is gitignored. So is `sessions/`, because recorded sessions are personal data.
+
+## Run
+
+| Command | What it does |
+| --- | --- |
+| `npm start` | Builds and launches the app (production build via `electron-vite preview`). |
+| `npm run dev` | Dev server with hot reload. |
+| `npm run verify` | Typecheck (strict, both tsconfigs), unit tests, build, then [post-build checks](scripts/verify-build.mjs): the SDK stays external in main, the preload is sandbox-safe, the native runtime resolves, no `any` outside the adapter, no blood-pressure/clinical wording. |
+| `npm run package` | Unpacked packaged app in `release/` (electron-builder `--dir`). For a packaged app, set `PRESAGE_API_KEY` in the environment, since `.env` is not shipped. |
+
+Press **Start session** and sit centered, still and well lit. Press **Stop & save** to write `sessions/<iso-date>.json`. Packaged builds write to `%APPDATA%/presage-vitals-module/sessions/` (or the platform equivalent). Closing the window mid-session also stops the SDK and saves what was recorded.
+
+`npm start` / `npm run dev` go through [scripts/launch.mjs](scripts/launch.mjs), which clears `ELECTRON_RUN_AS_NODE`. VS Code's integrated terminal exports it, and it makes Electron exit immediately.
+
+## Why electron-vite
+
+- It externalizes dependencies in the main process by default and lets you override that per package. The SDK must stay external: it finds its DLL/dylib through `require.resolve('@smartspectra/node-sdk-<plat>-<arch>/package.json')`. [electron.vite.config.ts](electron.vite.config.ts) also pins `@smartspectra/node-sdk` and `koffi` as external explicitly.
+- One small config file with separate main/preload/renderer builds and Vite HMR for the renderer. No plugin stack.
+- Forge's Vite template would work too, but it adds a second config layer (forge + three Vite configs) for no gain here. The SDK docs cover packaging for both, and this repo uses electron-builder, matching the official sample.
+
+**One deliberate exception:** the SDK's *preload* bridge is **bundled** into `out/preload`, not external. The window runs with `sandbox: true`, and a sandboxed preload cannot `require()` anything from `node_modules` at runtime. `@smartspectra/node-sdk/preload` is plain JS that only requires `electron` (no koffi, no native code), so bundling it is safe. `npm run verify` asserts that no koffi or native loader ends up in the preload.
+
+## Merging into the main app
+
+All Presage-specific code lives in [src/presage/](src/presage/). The host app imports only these three entry points and never imports the SDK:
+
+```ts
+// main process
+import { setupPresageMain } from './presage/main';
+const presage = setupPresageMain({
+  rendererFile,                                    // your index.html path
+  devServerUrl: process.env.ELECTRON_RENDERER_URL,
+  allowedMediaTypes: ['video', 'audio'],           // add 'audio' when you record speech
+});
+presage.attachWindow(win);   // SDK IPC, camera-permission scoping, graceful close
+
+// preload
+import './presage/preload';
+
+// renderer
+import { createPresageTracker } from './presage';
+const tracker = createPresageTracker({
+  apiKey: () => window.presageHost!.getApiKey(),
+  persist: (summary) => window.presageHost!.saveSession(summary),
+});
+window.presageHost?.onShutdownRequest(async () => { await tracker.shutdown(); });
+
+tracker.onSample((s) => { /* PresageSample: pulse, breathing, hrv, blinking, talking, expressions, landmarks */ });
+tracker.onValidation((v) => { /* v.advice, e.g. "Move closer"; v.hint is the SDK's text */ });
+tracker.onError((e) => { /* show it */ });
+tracker.onWarning((w) => { /* metric group empty / recovered */ });
+tracker.onStream((stream) => { video.srcObject = stream; });
+await tracker.startSession();
+const { summary, savedTo } = await tracker.stopSession();
+```
+
+When the main app starts recording audio for Gemini, pass `allowedMediaTypes: ['video', 'audio']`. The permission handler grants only the listed media types, and only to your own page (the `file://` index.html, or the dev-server origin in dev).
+
+| File | Role |
+| --- | --- |
+| [src/presage/tracker.ts](src/presage/tracker.ts) | Public renderer API. Owns the SDK lifecycle, the event fan-out, and the empty-metric-group watchdog. |
+| [src/presage/decode.ts](src/presage/decode.ts) | The only adapter from the SDK's protobuf payload to our types. Everything is narrowed from `unknown`. |
+| [src/presage/sessionRecorder.ts](src/presage/sessionRecorder.ts) | Framework-agnostic recorder and pure `summarizeSession()`. No DOM, SDK or Electron imports. |
+| [src/presage/types.ts](src/presage/types.ts) | All public types, including the summary schema. |
+| [src/presage/constants.ts](src/presage/constants.ts) | Confidence thresholds, windows, watchdog timing. |
+| [src/presage/metrics.ts](src/presage/metrics.ts) | Requested metric codes. |
+| [src/presage/main.ts](src/presage/main.ts), [preload.ts](src/presage/preload.ts), [bridge.ts](src/presage/bridge.ts) | Electron wiring and the IPC contract. |
+
+### Metrics requested
+
+`faceMetrics + cardioMetrics + breathingMetrics`, **minus `ARTERIAL_PRESSURE_TRACE`**. The cardio bundle includes a pressure waveform, which conflicts with the wellness-only rule, so it is not requested at all. Pulse rate and HRV are separate metric codes and arrive without it (verified live). The breathing bundle's pause-detection field is requested as part of the bundle but never read.
+
+Unauthorized metrics come back **empty, with no error**. The watchdog warns (in the UI and the console) when a requested group has produced nothing ~15 s after the SDK reports Running (cardio gets 25 s, see limitations). The warning says which cause is more likely:
+- If the face has been valid for at least 5 s, the likely cause is an **authorization gap**.
+- Otherwise it's **signal/positioning**, and the warning is repeated if the face later becomes valid.
+
+It also posts a "recovered" note if data shows up later.
+
+## Session summary JSON
+
+`sessions/<iso-date>.json`, with `:` replaced by `-` for Windows (e.g. `2026-09-26T15-29-20.651Z.json`). The authoritative schema is `SessionSummary` in [src/presage/types.ts](src/presage/types.ts).
+
+**Clock.** `tUs` is the SmartSpectra timestamp in µs. In Electron the renderer SDK anchors camera frame times to the Unix epoch once, then keeps them strictly monotonic. `tMs` is milliseconds since `startedAtEpochMs`, i.e. `tMs = tUs / 1000 - startedAtEpochMs`. To align a transcript, express its word/segment offsets relative to `startedAtEpochMs` (start audio capture at the same moment as `startSession()`, or record the offset).
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-09-26T15:29:20.651Z", "endedAt": "…", "startedAtEpochMs": 1790436560651, "durationMs": 77132,
+  "clock": { "description": "…", "firstSdkTimestampUs": 1790436562691000, "lastSdkTimestampUs": 1790436637570901 },
+
+  "pulse": {                       // readings with confidence >= 40 only
+    "avg": 86.2, "min": 81.9, "max": 88.5, "unit": "bpm",
+    "samplesUsed": 15, "samplesDroppedLowConfidence": 7, "minConfidence": 40,
+    "timeline": [{ "startMs": 0, "endMs": 10000, "avg": null, "samples": 0 }, …]   // per 10 s
+  },
+  "breathing": {                   // confidence >= 45 AND not from a talking-heavy 30 s window
+    "avg": 14.1, "min": 12.0, "max": 16.3, "unit": "breaths/min",
+    "samplesUsed": 3, "samplesDroppedLowConfidence": 11, "samplesExcludedWhileTalking": 2, "minConfidence": 45,
+    "note": "Breathing rate is a 30 s rolling average and is unreliable while talking …"
+  },
+  "hrv": {                         // latest reading that is stable and confidence >= 50
+    "latestStable": { "tMs": 65000, "rmssdMs": 42, "sdnnMs": 50, "meanNnMs": 820, "baevsky": 90, "confidence": 70 } /* or null */,
+    "samplesUsed": 2, "samplesDroppedLowConfidence": 1, "minConfidence": 50, "note": "HRV uses a 60 s window …"
+  },
+  "blinks":   { "count": 13, "perMinute": 10.8, "onsetsMs": [12232, 14201, …] },
+  "talking":  { "ratio": 0.42, "talkingMs": 30300, "observedMs": 72083, "intervals": [{ "startMs": 8041, "endMs": 11193 }, …] },
+  "expressions": {
+    "distribution": { "neutral": 0.705, "surprise": 0.199, "happy": 0.037, … },   // share of readings where each was top
+    "timeline": [{ "startMs": 0, "endMs": 10000, "dominant": "neutral", "distribution": { … }, "samples": 210 }, …],
+    "samples": 1698
+  },
+  "face": { "validRatio": 0.753, "validMs": 56566, "observedMs": 75092 },          // camera-tuning time excluded
+  "validationIssues": [
+    { "code": 12, "name": "ExcessiveMotion", "hint": "Hold still - motion may affect accuracy.", "startMs": 15544, "endMs": 16552 }, …
+  ],
+  "emptyMetricGroups": [],         // requested groups that produced nothing all session
+  "series": {                      // accepted readings, for transcript alignment
+    "pulse":     [{ "tMs": 12000, "tUs": …, "bpm": 88, "confidence": 61.2 }, …],
+    "breathing": [{ "tMs": 33544, "tUs": …, "breathsPerMin": 6, "confidence": 50.1, "excludedWhileTalking": true }, …],
+    "hrv":       [{ "tMs": …, "tUs": …, "rmssdMs": …, "sdnnMs": …, "baevsky": …, "confidence": … }]
+  }
+}
+```
+
+The numbers above come from a real 77 s test session, except `breathing` and `hrv`: those are illustrative, because that session produced no breathing or HRV readings that qualified.
+
+Tunables are in [src/presage/constants.ts](src/presage/constants.ts): `MIN_VITALS_CONFIDENCE` (defaults are the SDK's own "stable" cut-offs from the data-types docs), `BREATHING_MAX_TALKING_FRACTION` (0.1), `TIMELINE_BUCKET_MS` (10 s), and the watchdog timings.
+
+## Known limitations
+
+- **Lighting.** Dim or backlit faces produce `TooDark` / `TooBright` hints and low confidence. In one early test in a dim room, the SDK hit `ProcessingFailed (8)` about 13 s after Running and stopped producing data. I couldn't reproduce it in good light. The app shows the error and keeps **Stop & save** available so the camera can be released and the partial session kept. It does not auto-recover (`reset()`).
+- **Motion, a second face, and framing** (`ExcessiveMotion`, `MultipleFacesFound`, `ChestNotVisible`) pause good readings. They are recorded as `validationIssues` intervals.
+- **Breathing uses a 30 s window**, and confidence is 0 until it fills. Presage says breathing "does not work when talking", so readings whose 30 s window was more than 10 % talking are excluded. In an answer-heavy session, expect few or no usable breathing readings. That is by design.
+- **HRV uses a 60 s window**, and confidence is 0 until it fills. Sessions under ~60 s of clean signal have no HRV. In a 77 s test with motion and a second face in frame, the SDK emitted no HRV readings at all, so **HRV output is untested end to end**.
+- **Pulse is a 12 s average.** In testing, the first cardio reading arrived about 16 s after Running, so the cardio watchdog waits 25 s instead of 15 s. Early pulse readings are often low-confidence and are dropped from the summary.
+- **Landmarks** are pixel coordinates in the 1280×720 processed frame and are drawn over the mirrored preview. The SDK logs `Using NORM_RECT without IMAGE_DIMENSIONS is only supported for the square ROI` on every run, which may mean slight distortion of landmark positions on 16:9 frames. They looked roughly aligned in testing.
+- **Readings are sparse and bursty.** Pulse arrived as ~22 readings in 77 s, some in bursts, so the 10 s timeline has empty buckets.
+- **Only Windows x64 was run.** macOS/Linux follow the documented paths but are unverified.
+- **The API key reaches the renderer**, because the renderer SDK takes it in its constructor. It is fetched at runtime over IPC (only from our own page), never bundled.

@@ -1,0 +1,70 @@
+{
+  "name": "presage-vitals-module",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SmartSpectra (Presage) vitals + face-tracking module for the interview practice app.",
+  "main": "out/main/index.js",
+  "scripts": {
+    "start": "node scripts/launch.mjs preview",
+    "dev": "node scripts/launch.mjs dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "verify": "npm run typecheck && npm test && npm run build && node scripts/verify-build.mjs",
+    "package": "npm run build && electron-builder --dir"
+  },
+  "dependencies": {
+    "@smartspectra/node-sdk": "^3.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.7"
+  },
+  "build": {
+    "appId": "dev.hackathon.presage-vitals-module",
+    "productName": "Presage Vitals Module",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**",
+      "package.json",
+      "!node_modules/@smartspectra/node-sdk-*/**"
+    ],
+    "asar": true,
+    "mac": {
+      "extendInfo": {
+        "NSCameraUsageDescription": "Camera access is used to read face and wellness signals during practice sessions."
+      },
+      "extraResources": [
+        {
+          "from": "node_modules/@smartspectra/node-sdk-darwin-${arch}/",
+          "to": "smartspectra"
+        }
+      ]
+    },
+    "win": {
+      "target": "dir",
+      "extraResources": [
+        {
+          "from": "node_modules/@smartspectra/node-sdk-win32-${arch}/",
+          "to": "smartspectra"
+        }
+      ]
+    },
+    "linux": {
+      "target": "dir",
+      "extraResources": [
+        {
+          "from": "node_modules/@smartspectra/node-sdk-linux-${arch}/",
+          "to": "smartspectra"
+        }
+      ]
+    }
+  }
+}

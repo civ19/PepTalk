@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- worker-src blob: is required: the SmartSpectra renderer SDK runs its frame pump in a blob: worker. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob: mediastream:; worker-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Presage Vitals Module</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>Practice session</h1>
+      <span id="status" class="badge" data-status="idle">Idle</span>
+      <span id="timer" class="timer">00:00</span>
+      <div class="spacer"></div>
+      <button id="start" type="button" class="primary">Start session</button>
+      <button id="stop" type="button" disabled>Stop &amp; save</button>
+    </header>
+
+    <div id="errors" class="banner-stack" aria-live="assertive"></div>
+
+    <main class="layout">
+      <section class="stage">
+        <div id="hint" class="hint" data-kind="idle" aria-live="polite">Press <strong>Start session</strong> when you're ready.</div>
+        <div class="video-wrap">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <div id="placeholder" class="placeholder">Camera is off</div>
+        </div>
+        <p class="footnote">Wellness signals only. Readings are approximate and depend on lighting, stillness and camera quality.</p>
+      </section>
+
+      <aside class="panel">
+        <div class="tile">
+          <div class="label">Pulse</div>
+          <div class="value"><span id="pulse">--</span><span class="unit">bpm</span></div>
+          <div id="pulse-conf" class="sub">waiting for signal (~12 s)</div>
+        </div>
+        <div class="tile">
+          <div class="label">Breathing</div>
+          <div class="value"><span id="breathing">--</span><span class="unit">/min</span></div>
+          <div id="breathing-conf" class="sub">needs ~30 s of signal</div>
+        </div>
+        <div class="tile">
+          <div class="label">HRV (RMSSD)</div>
+          <div class="value"><span id="hrv">--</span><span class="unit">ms</span></div>
+          <div id="hrv-conf" class="sub">needs ~60 s of signal</div>
+        </div>
+        <div class="tile row">
+          <div class="indicator"><span id="blink-dot" class="dot"></span>Blink <span id="blink-count" class="count">0</span></div>
+          <div class="indicator"><span id="talk-dot" class="dot"></span>Talking</div>
+        </div>
+        <div class="tile">
+          <div class="label">Top expression</div>
+          <div class="value small"><span id="expression">--</span></div>
+          <div id="expression-conf" class="sub"></div>
+        </div>
+        <div id="warnings" class="warnings"></div>
+        <details id="summary-box" class="summary" hidden>
+          <summary>Last session summary</summary>
+          <p id="summary-path" class="sub"></p>
+          <pre id="summary-json"></pre>
+        </details>
+      </aside>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

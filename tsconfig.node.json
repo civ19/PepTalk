@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "composite": true
+  },
+  "include": [
+    "electron.vite.config.ts",
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "src/presage/main.ts",
+    "src/presage/preload.ts",
+    "src/presage/bridge.ts",
+    "src/presage/types.ts",
+    "src/presage/constants.ts",
+    "src/presage/sessionRecorder.ts",
+    "src/presage/sessionRecorder.test.ts",
+    "src/presage/decode.ts",
+    "src/presage/decode.test.ts"
+  ]
+}

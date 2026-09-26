@@ -1,0 +1,17 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+out/
+release/
+dist/
+
+# Recorded sessions contain personal physiological data; keep them local.
+sessions/
+
+.DS_Store
+*.log
+*.tsbuildinfo
