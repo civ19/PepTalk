@@ -2,10 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <!-- worker-src blob: is required: the SmartSpectra renderer SDK runs its frame pump in a blob: worker. -->
+    <!-- worker-src blob: is required: the SmartSpectra renderer SDK runs its frame pump in a blob: worker.
+         clip: serves session clips and thumbnails (src/main/clips/protocol.ts). -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob: mediastream:; worker-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: clip:; media-src 'self' blob: mediastream: clip:; worker-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Presage Vitals Module</title>
@@ -13,16 +14,22 @@
   <body>
     <header class="topbar">
       <h1>Practice session</h1>
+      <nav class="tabs" aria-label="View">
+        <button id="tab-record" type="button" class="tab" aria-pressed="true">Record</button>
+        <button id="tab-review" type="button" class="tab" aria-pressed="false">Review</button>
+      </nav>
       <span id="status" class="badge" data-status="idle">Idle</span>
       <span id="timer" class="timer">00:00</span>
       <div class="spacer"></div>
+      <span id="flag-note" class="flag-note" aria-live="polite"></span>
+      <button id="flag-moment" type="button" disabled title="Flags the last 5 seconds (hotkey F)">Flag this moment <kbd>F</kbd></button>
       <button id="start" type="button" class="primary">Start session</button>
       <button id="stop" type="button" disabled>Stop &amp; save</button>
     </header>
 
     <div id="errors" class="banner-stack" aria-live="assertive"></div>
 
-    <main class="layout">
+    <main id="record-view" class="layout">
       <section class="stage">
         <div id="hint" class="hint" data-kind="idle" aria-live="polite">Press <strong>Start session</strong> when you're ready.</div>
         <div class="video-wrap">
@@ -68,6 +75,8 @@
           <div id="capture-status" class="sub"></div>
           <div id="upload-status" class="sub"></div>
           <button id="retry-upload" type="button" class="small" hidden>Retry upload</button>
+          <div id="flags-status" class="sub"></div>
+          <button id="review-last" type="button" class="small" hidden>Review flags</button>
         </div>
         <div id="warnings" class="warnings"></div>
         <details id="summary-box" class="summary" hidden>
@@ -76,6 +85,17 @@
           <pre id="summary-json"></pre>
         </details>
       </aside>
+    </main>
+
+    <main id="review-view" class="review" hidden>
+      <div class="review-bar">
+        <label class="field">Session <select id="review-session"></select></label>
+        <button id="review-detect" type="button">Run detectors</button>
+        <button id="review-clips" type="button">Generate clips</button>
+        <span id="review-status" class="sub" aria-live="polite"></span>
+      </div>
+      <p id="review-empty" class="review-empty" hidden></p>
+      <div id="review-cards" class="cards"></div>
     </main>
     <script type="module" src="./src/main.ts"></script>
   </body>

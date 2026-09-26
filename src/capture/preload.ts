@@ -13,6 +13,7 @@ const captureHost: CaptureHostBridge = {
   finish: (id, req) => ipcRenderer.invoke(CAPTURE_IPC.finish, id, req) as Promise<Session>,
   discard: (id) => ipcRenderer.invoke(CAPTURE_IPC.discard, id) as Promise<void>,
   retryUpload: (id) => ipcRenderer.invoke(CAPTURE_IPC.retryUpload, id) as Promise<UploadState>,
+  listSessions: () => ipcRenderer.invoke(CAPTURE_IPC.listSessions) as Promise<Session[]>,
   onUploadStatus: (cb) => {
     ipcRenderer.on(CAPTURE_IPC.uploadStatus, (_e, payload: UploadStatusEvent) => cb(payload));
   },

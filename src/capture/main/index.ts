@@ -13,18 +13,21 @@
 
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import { SESSION_SCHEMA_VERSION, type SampleRecord, type Session, type UploadState } from '../../shared/session-types';
 import { CAPTURE_IPC, type FinishRequest, type SessionPatch, type UploadStatusEvent } from '../bridge';
-import { parseSamples, uploadSession } from './db';
+import { databaseUrlFromEnv as databaseUrl, parseSamples, uploadSession } from './db';
+import { writeJsonAtomic } from './files';
 import { probe, remux } from './media';
 
 export interface CaptureMainOptions {
   sessionsDir: string;
   /** Throws unless the IPC sender is our own page (see PresageMain.assertOwnPage). */
   assertOwnPage: (event: IpcMainInvokeEvent) => void;
+  /** Called after a session's rows reached TigerData (e.g. to upload its flags and clips too). */
+  onUploaded?: (sessionId: string) => void;
 }
 
 export interface CaptureMain {
@@ -38,32 +41,14 @@ const QUIT_WAIT_MS = 30_000;
 
 const extFor = (mimeType: string): 'mp4' | 'webm' => (mimeType.startsWith('video/mp4') ? 'mp4' : 'webm');
 
-function databaseUrl(): string | null {
-  const url = process.env['DATABASE_URL']?.trim();
-  return url ? url : null;
-}
-
 function isSampleRecord(v: unknown): v is SampleRecord {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
   return (r['kind'] === 'vitals' || r['kind'] === 'face' || r['kind'] === 'validation') && typeof r['tMs'] === 'number' && Number.isFinite(r['tMs']);
 }
 
-async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
-  const tmp = `${file}.tmp`;
-  const text = `${JSON.stringify(value, null, 2)}\n`;
-  await writeFile(tmp, text, 'utf8');
-  try {
-    await rename(tmp, file);
-  } catch {
-    // Windows can refuse to replace a file another process has open (e.g. a virus scanner).
-    await writeFile(file, text, 'utf8');
-    await rm(tmp, { force: true });
-  }
-}
-
 export function setupCaptureMain(options: CaptureMainOptions): CaptureMain {
-  const { sessionsDir, assertOwnPage } = options;
+  const { sessionsDir, assertOwnPage, onUploaded } = options;
   // DATABASE_URL may live in .env next to the app (loadEnvFile never overrides what's already set).
   const envFile = join(app.getAppPath(), '.env');
   if (existsSync(envFile)) process.loadEnvFile(envFile);
@@ -133,6 +118,7 @@ export function setupCaptureMain(options: CaptureMainOptions): CaptureMain {
   async function upload(id: string): Promise<UploadState> {
     const s = await readSession(id);
     const url = databaseUrl();
+    let uploaded = false;
     if (!url) {
       s.upload = { status: 'not-configured', attemptedAt: null, error: 'DATABASE_URL is not set' };
     } else {
@@ -141,6 +127,7 @@ export function setupCaptureMain(options: CaptureMainOptions): CaptureMain {
         const n = await uploadSession(url, dirOf(id), s);
         s.upload = { status: 'uploaded', attemptedAt, error: null };
         console.info(`[capture] ${id}: uploaded ${n.face} face, ${n.vitals} vitals, ${n.validation} validation rows`);
+        uploaded = true;
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
         s.upload = { status: 'failed', attemptedAt, error };
@@ -149,6 +136,7 @@ export function setupCaptureMain(options: CaptureMainOptions): CaptureMain {
     }
     await saveSession(s);
     broadcast({ sessionId: id, upload: s.upload });
+    if (uploaded) onUploaded?.(id);
     return s.upload;
   }
 
@@ -219,6 +207,13 @@ export function setupCaptureMain(options: CaptureMainOptions): CaptureMain {
   ipcMain.handle(CAPTURE_IPC.retryUpload, (event, id: string) => {
     assertOwnPage(event);
     return enqueue(id, () => upload(id));
+  });
+
+  ipcMain.handle(CAPTURE_IPC.listSessions, async (event): Promise<Session[]> => {
+    assertOwnPage(event);
+    const names = await readdir(sessionsDir).catch(() => [] as string[]);
+    const sessions = await Promise.all(names.filter((n) => UUID_RE.test(n)).map((n) => readSession(n).catch(() => null)));
+    return sessions.filter((s): s is Session => s !== null).sort((a, b) => b.startedAtIso.localeCompare(a.startedAtIso));
   });
 
   // Let in-flight remux/upload work finish before the process exits.

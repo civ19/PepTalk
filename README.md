@@ -189,6 +189,33 @@ How that's achieved (from `npm run debug:dump`, see [src/capture/clockMatch.ts](
 
 **Fixtures.** `npm run export-fixture <id>` copies a session to `fixtures/<id>/` (gitignored: it contains a real face, voice and vitals, so share it only with that person's consent).
 
+## Flags, clips and review
+
+Moments worth reviewing become **flags**. Each flag gets a short **clip** cut from the recording, and the **Review** tab shows them. The contract is [src/shared/flags.ts](src/shared/flags.ts).
+
+```
+sessions/<uuid>/
+  flags.json          FlagsFile: detector and manual flags (the source of truth)
+  clips.json          ClipsFile: planned clips and their status
+  clips/<id>.mp4      H.264 + AAC, moov first; clip time 0 = session time clip.startMs
+  clips/<id>.jpg      thumbnail: the frame at the flagged moment's midpoint
+  flags-sync.json     hash of what was last mirrored to TigerData
+```
+
+- **Where flags come from.** Detectors ([src/main/flags/detectors.ts](src/main/flags/detectors.ts)) run on a stopped session. There is one so far, `high_hr`, and it is a **placeholder** that exists so the pipeline can run on real data: pulse above baseline (median of the first 30 s) + 15 bpm for 5 s or more. To add a detector, append it to `DETECTORS`. Manual flags come from **Flag this moment** (hotkey **F**, flags the last 5 s) while recording, or from `npm run flag`. After **Stop & save**, the detectors run and clips are cut automatically.
+- **Clips** ([src/main/clips/](src/main/clips/)): 3 s of padding before each flag and 2 s after, clamped to the video. Flags whose padded windows overlap share one clip. Clips are at least 4 s and at most 20 s; a longer chain of flags is split. Clip ids depend only on (session, start, end), so existing files are reused, and after changing encoder settings you delete `clips/` to re-cut. Clips are cut two at a time in the main process, with progress on `window.flags.onClipUpdate`. Frame timing matches the recording (it's variable frame rate).
+- **Renderer access** is through `window.flags` ([src/shared/flags-bridge.ts](src/shared/flags-bridge.ts)). Media comes from the `clip://local/<sessionId>/<path>` protocol ([src/main/clips/protocol.ts](src/main/clips/protocol.ts)). It serves only media files inside the sessions folder and supports range requests, so `<video>` can seek.
+- **TigerData:** `npm run db:migrate` adds the `flags` and `clips` tables ([db/migrations/002_flags_clips.sql](db/migrations/002_flags_clips.sql)). They mirror the JSON files: metadata, evidence as jsonb, and the clip's `file://` URI, never video data. A session's flags are mirrored right after the session uploads, again after every change, and at the next launch if a sync failed.
+
+| Command | What it does |
+| --- | --- |
+| `npm run flag -- <id> <startMs> <endMs> <type>` | Adds a manual flag (`type`: `high_hr`, `low_eye_contact`, `fast_pace`, `slow_pace`, `tense_expression`, `manual`). |
+| `npm run clips -- <id>` | Cuts clips for the session's flags. |
+| `npm run detect -- <id>` | Runs the detectors (replaces detector flags, keeps manual ones). |
+| `npm run flags:check -- <id>` | Read-only: checks that flags.json, clips.json, the clip files and the TigerData rows agree. |
+
+These CLI commands run the app's own code through vite-node, on `./sessions` or the packaged app's sessions folder. Don't run them on a session the app is cutting clips for at the same moment.
+
 ## Known limitations
 
 - **Lighting.** Dim or backlit faces produce `TooDark` / `TooBright` hints and low confidence. In one early test in a dim room, the SDK hit `ProcessingFailed (8)` about 13 s after Running and stopped producing data. I couldn't reproduce it in good light. The app shows the error and keeps **Stop & save** available so the camera can be released and the partial session kept. It does not auto-recover (`reset()`).

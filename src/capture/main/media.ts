@@ -10,9 +10,19 @@ export function ffmpegPath(): string | null {
   return ffmpegStatic ? ffmpegStatic.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1') : null;
 }
 
-function run(args: string[]): Promise<{ code: number | null; stderr: string }> {
+export interface RunOptions {
+  /** Kills ffmpeg when aborted (e.g. the app is quitting). */
+  signal?: AbortSignal;
+  /** Kills ffmpeg if it runs longer than this. */
+  timeoutMs?: number;
+}
+
+/** Runs the bundled ffmpeg. Resolves with the exit code (null if it was killed) and the tail of stderr. */
+export function runFfmpeg(args: string[], options: RunOptions = {}): Promise<{ code: number | null; stderr: string }> {
   const bin = ffmpegPath();
   if (!bin) return Promise.reject(new Error('ffmpeg-static has no binary for this platform'));
+  const { signal, timeoutMs } = options;
+  if (signal?.aborted) return Promise.reject(new Error('ffmpeg was cancelled'));
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { windowsHide: true });
     let stderr = '';
@@ -20,15 +30,32 @@ function run(args: string[]): Promise<{ code: number | null; stderr: string }> {
       stderr += d.toString();
       if (stderr.length > 64_000) stderr = stderr.slice(-32_000);
     });
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stderr }));
+    const kill = (why: string): void => {
+      stderr += `\n${why}`;
+      child.kill();
+    };
+    const onAbort = (): void => kill('cancelled');
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const timer = timeoutMs === undefined ? null : setTimeout(() => kill(`timed out after ${timeoutMs} ms`), timeoutMs);
+    const done = (): void => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    child.on('error', (err) => {
+      done();
+      reject(err);
+    });
+    child.on('close', (code) => {
+      done();
+      resolve({ code, stderr });
+    });
   });
 }
 
 /** Stream-copies `input` into `output` (container from the extension). */
 export async function remux(input: string, output: string): Promise<void> {
   const mp4 = output.toLowerCase().endsWith('.mp4');
-  const { code, stderr } = await run([
+  const { code, stderr } = await runFfmpeg([
     '-hide_banner',
     '-loglevel',
     'error',
@@ -55,7 +82,7 @@ export interface MediaInfo {
 /** Reads duration and start time from ffmpeg's input banner. */
 export async function probe(file: string): Promise<MediaInfo> {
   // Without an output ffmpeg prints the input info and exits non-zero; that's expected.
-  const { stderr } = await run(['-hide_banner', '-i', file]);
+  const { stderr } = await runFfmpeg(['-hide_banner', '-i', file]);
   const dur = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr);
   const start = /start:\s*(-?\d+(?:\.\d+)?)/.exec(stderr);
   const durationMs = dur ? Math.round((Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3])) * 1000) : null;

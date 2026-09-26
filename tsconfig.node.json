@@ -29,6 +29,7 @@
     "src/shared/**/*.ts",
     "src/capture/clockMatch.ts",
     "src/capture/samples.ts",
-    "src/presage/gaze.ts"
+    "src/presage/gaze.ts",
+    "scripts/**/*.ts"
   ]
 }

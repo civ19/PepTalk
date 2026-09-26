@@ -15,7 +15,11 @@
     "debug:dump": "node scripts/debug-dump.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "export-fixture": "node scripts/export-fixture.mjs",
-    "inspect-frame": "node scripts/inspect-frame.mjs"
+    "inspect-frame": "node scripts/inspect-frame.mjs",
+    "flag": "vite-node scripts/flags.ts add",
+    "clips": "vite-node scripts/flags.ts clips",
+    "detect": "vite-node scripts/flags.ts detect",
+    "flags:check": "vite-node scripts/flags.ts check"
   },
   "dependencies": {
     "@smartspectra/node-sdk": "^3.3.0",
@@ -31,6 +35,7 @@
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
     "vite": "^7.3.6",
+    "vite-node": "^3.2.4",
     "vitest": "^3.2.7"
   },
   "build": {

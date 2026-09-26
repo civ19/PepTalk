@@ -11,6 +11,7 @@ export const CAPTURE_IPC = {
   finish: 'capture:finish',
   discard: 'capture:discard',
   retryUpload: 'capture:retry-upload',
+  listSessions: 'capture:list-sessions',
   /** main -> renderer: an upload finished or failed. */
   uploadStatus: 'capture:upload-status',
 } as const;
@@ -47,6 +48,8 @@ export interface CaptureHostBridge {
   discard(id: string): Promise<void>;
   /** Uploads (again) a session whose upload failed or never ran. */
   retryUpload(id: string): Promise<UploadState>;
+  /** Every session.json in the sessions folder, newest first. */
+  listSessions(): Promise<Session[]>;
   onUploadStatus(cb: (e: UploadStatusEvent) => void): void;
 }
 

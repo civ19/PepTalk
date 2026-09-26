@@ -142,6 +142,14 @@ export class SessionCapture {
     return this.id;
   }
 
+  /** The current moment on the session clock (tMs), or null unless the video is recording. */
+  videoTimeNowMs(): number | null {
+    if (this.state !== 'active' || this.recorderStartPerf === null) return null;
+    // The anchor pins video time 0 to the wall clock; before it exists, time since MediaRecorder.start() is within a frame or two.
+    if (this.anchor) return epochUsNow() / 1000 - this.anchor.videoStartEpochMs;
+    return performance.now() - this.recorderStartPerf;
+  }
+
   begin(): void {
     if (this.state !== 'idle') throw new Error('SessionCapture: already capturing');
     this.reset();

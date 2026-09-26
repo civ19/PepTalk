@@ -17,6 +17,7 @@ import {
 } from '../../presage';
 import { SessionCapture } from '../../capture/sessionCapture';
 import type { UploadState } from '../../shared/session-types';
+import { formatTime, setupReview } from './review';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -56,6 +57,14 @@ const ui = {
   captureStatus: $('capture-status'),
   uploadStatus: $('upload-status'),
   retryUpload: $<HTMLButtonElement>('retry-upload'),
+  flagsStatus: $('flags-status'),
+  reviewLast: $<HTMLButtonElement>('review-last'),
+  flagMoment: $<HTMLButtonElement>('flag-moment'),
+  flagNote: $('flag-note'),
+  tabRecord: $<HTMLButtonElement>('tab-record'),
+  tabReview: $<HTMLButtonElement>('tab-review'),
+  recordView: $('record-view'),
+  reviewView: $('review-view'),
 };
 
 // ---------------------------------------------------------------------------
@@ -152,8 +161,106 @@ async function finishCapture(): Promise<void> {
       `${session.counts.face} face / ${session.counts.vitals} vitals rows. Saved in sessions/${session.id}/`;
     ui.captureBox.hidden = false;
     showUpload(session.upload);
+    void runFlagPipeline(session.id);
   } catch (err) {
     showError({ code: 'CAPTURE_SAVE_FAILED', name: 'CaptureSaveFailed', message: err instanceof Error ? err.message : String(err), retryable: false });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Flags: "Flag this moment" while recording, the detector -> clip pipeline
+// after Stop, and the review page (src/renderer/src/review.ts).
+
+const flagsApi = window.flags;
+if (!flagsApi) {
+  showError({ code: 'NO_BRIDGE', name: 'PreloadMissing', message: 'window.flags is unavailable: flagging and review are off.', retryable: false });
+}
+const FLAG_LOOKBACK_MS = 5_000;
+
+const review = setupReview(
+  {
+    session: $<HTMLSelectElement>('review-session'),
+    detect: $<HTMLButtonElement>('review-detect'),
+    clips: $<HTMLButtonElement>('review-clips'),
+    status: $('review-status'),
+    empty: $('review-empty'),
+    cards: $('review-cards'),
+  },
+  flagsApi,
+  captureHost,
+);
+
+function showView(view: 'record' | 'review', sessionId?: string): void {
+  ui.recordView.hidden = view !== 'record';
+  ui.reviewView.hidden = view !== 'review';
+  ui.tabRecord.setAttribute('aria-pressed', String(view === 'record'));
+  ui.tabReview.setAttribute('aria-pressed', String(view === 'review'));
+  if (view === 'review') void review.open(sessionId);
+  else for (const v of ui.reviewView.querySelectorAll('video')) v.pause();
+}
+ui.tabRecord.addEventListener('click', () => showView('record'));
+ui.tabReview.addEventListener('click', () => showView('review'));
+ui.reviewLast.addEventListener('click', () => {
+  if (lastCapturedId) showView('review', lastCapturedId);
+});
+
+let flagNoteTimer: number | null = null;
+function noteFlag(text: string): void {
+  ui.flagNote.textContent = text;
+  if (flagNoteTimer !== null) clearTimeout(flagNoteTimer);
+  flagNoteTimer = window.setTimeout(() => (ui.flagNote.textContent = ''), 4_000);
+}
+
+function canFlag(): boolean {
+  return !!flagsApi && !!capture?.sessionId && capture.videoTimeNowMs() !== null;
+}
+
+function updateFlagButton(): void {
+  ui.flagMoment.disabled = !canFlag();
+}
+
+/** Flags the last 5 seconds of the recording as a manual flag. */
+function flagMoment(): void {
+  const id = capture?.sessionId;
+  const now = capture?.videoTimeNowMs() ?? null;
+  if (!flagsApi || !id || now === null) return;
+  const endMs = Math.round(now);
+  const startMs = Math.max(0, endMs - FLAG_LOOKBACK_MS);
+  flagsApi.add(id, { type: 'manual', startMs, endMs }).then(
+    (f) => noteFlag(`Flagged ${formatTime(f.startMs)} – ${formatTime(f.endMs)}`),
+    (err: unknown) => showError({ code: 'FLAG_FAILED', name: 'FlagFailed', message: err instanceof Error ? err.message : String(err), retryable: true }),
+  );
+}
+ui.flagMoment.addEventListener('click', flagMoment);
+document.addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() !== 'f' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  const target = e.target;
+  if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+  if (!canFlag()) return;
+  e.preventDefault();
+  flagMoment();
+});
+
+/** After Stop: run the detectors, then cut clips for every flag (detected or flagged while recording). */
+async function runFlagPipeline(sessionId: string): Promise<void> {
+  if (!flagsApi) return;
+  ui.reviewLast.hidden = true;
+  ui.flagsStatus.textContent = 'Looking for moments to review…';
+  try {
+    await flagsApi.runDetectors(sessionId);
+    const { flags } = await flagsApi.list(sessionId);
+    if (flags.length === 0) {
+      ui.flagsStatus.textContent = 'No flagged moments in this session.';
+      return;
+    }
+    ui.flagsStatus.textContent = `${flags.length} flagged moment(s). Cutting clips…`;
+    ui.reviewLast.hidden = false;
+    await flagsApi.generateClips(sessionId);
+    const { clips } = await flagsApi.list(sessionId);
+    const failed = clips.filter((c) => c.status === 'error').length;
+    ui.flagsStatus.textContent = `${flags.length} flagged moment(s), ${clips.length} clip(s)${failed ? `, ${failed} failed` : ''}.`;
+  } catch (err) {
+    ui.flagsStatus.textContent = `Flags: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -174,6 +281,7 @@ let timerHandle: number | null = null;
 function renderTimer(): void {
   const s = Math.floor((Date.now() - sessionStartedAt) / 1000);
   ui.timer.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  updateFlagButton();
 }
 
 tracker.onStatus((s) => {
@@ -182,6 +290,7 @@ tracker.onStatus((s) => {
   ui.start.disabled = tracker.sessionActive || s === 'starting' || s === 'stopping';
   // Stop stays available after an SDK error so the camera can be released and the partial session saved.
   ui.stop.disabled = !tracker.sessionActive || s === 'stopping';
+  updateFlagButton();
   if (s === 'error' && tracker.sessionActive) {
     ui.hint.dataset['kind'] = 'issue';
     ui.hint.textContent = 'Measurement stopped working. Press Stop & save to release the camera and keep what was recorded.';

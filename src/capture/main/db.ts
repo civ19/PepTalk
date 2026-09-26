@@ -22,6 +22,12 @@ import {
 
 const ROWS_PER_INSERT = 500;
 
+/** DATABASE_URL from the environment, or null when TigerData isn't configured (sessions stay local). */
+export function databaseUrlFromEnv(): string | null {
+  const url = process.env['DATABASE_URL']?.trim();
+  return url ? url : null;
+}
+
 /**
  * pg client config that always uses verified TLS. `sslmode` is stripped from
  * the URL because pg lets connection-string SSL settings override the `ssl`
@@ -75,13 +81,14 @@ export interface SqlClient {
   end(): Promise<void>;
 }
 
-async function connect(databaseUrl: string): Promise<SqlClient> {
+export async function connect(databaseUrl: string): Promise<SqlClient> {
   const client = new pg.Client(pgClientConfig(databaseUrl));
   await client.connect();
   return client;
 }
 
-async function insertRows(client: SqlClient, table: string, columns: readonly string[], rows: readonly unknown[][], conflict: string): Promise<void> {
+/** Multi-row INSERTs in chunks; `conflict` is the ON CONFLICT clause. */
+export async function insertRows(client: SqlClient, table: string, columns: readonly string[], rows: readonly unknown[][], conflict: string): Promise<void> {
   for (let i = 0; i < rows.length; i += ROWS_PER_INSERT) {
     const chunk = rows.slice(i, i + ROWS_PER_INSERT);
     const params: unknown[] = [];

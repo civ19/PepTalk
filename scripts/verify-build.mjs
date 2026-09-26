@@ -5,6 +5,7 @@
 //     way the SDK does at runtime.
 //  4. No `any` outside src/presage/decode.ts.
 //  5. No blood-pressure / clinical vocabulary in UI or summary-producing code.
+//  6. ffmpeg-static stays external in out/main and is unpacked from app.asar when packaged.
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { createRequire } from 'node:module';
@@ -28,6 +29,12 @@ const walk = (dir) =>
 const mainJs = walk(join(root, 'out/main')).filter((f) => f.endsWith('.js')).map((f) => readFileSync(f, 'utf8')).join('\n');
 check(/require\(["']@smartspectra\/node-sdk\/main["']\)/.test(mainJs), 'out/main requires @smartspectra/node-sdk/main at runtime (external)');
 check(!/koffi\.load\(|resolveNativeLibrary/.test(mainJs), 'out/main does not inline the SDK FFI / native resolver');
+
+// ffmpeg-static finds its binary via __dirname; bundled, that path would be wrong. Packaged, the
+// binary is unpacked from app.asar (build.asarUnpack) and ffmpegPath() points there.
+const pkgJson = JSON.parse(read('package.json'));
+check(/require\(["']ffmpeg-static["']\)/.test(mainJs), 'out/main requires ffmpeg-static at runtime (external)');
+check((pkgJson.build?.asarUnpack ?? []).some((p) => p.startsWith('node_modules/ffmpeg-static')), 'package.json build.asarUnpack includes ffmpeg-static');
 
 const preloadJs = walk(join(root, 'out/preload')).filter((f) => f.endsWith('.js')).map((f) => readFileSync(f, 'utf8')).join('\n');
 check(preloadJs.includes('__smartspectraBridge'), 'out/preload contains the SDK preload bridge');
