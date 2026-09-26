@@ -1,8 +1,12 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2023"],
-    "types": ["node"],
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "node"
+    ],
     "composite": true
   },
   "include": [
@@ -17,6 +21,14 @@
     "src/presage/sessionRecorder.ts",
     "src/presage/sessionRecorder.test.ts",
     "src/presage/decode.ts",
-    "src/presage/decode.test.ts"
+    "src/presage/decode.test.ts",
+    "src/capture/main/**/*.ts",
+    "src/capture/preload.ts",
+    "src/capture/bridge.ts",
+    "src/capture/**/*.test.ts",
+    "src/shared/**/*.ts",
+    "src/capture/clockMatch.ts",
+    "src/capture/samples.ts",
+    "src/presage/gaze.ts"
   ]
 }

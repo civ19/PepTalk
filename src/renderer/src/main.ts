@@ -6,6 +6,8 @@ import {
   classifyGaze,
   createPresageTracker,
   MIN_VITALS_CONFIDENCE,
+  PayloadDump,
+  type DebugConfig,
   type GazeDirection,
   type LandmarksReading,
   type PresageError,
@@ -13,6 +15,8 @@ import {
   type TrackerStatus,
   type ValidationEvent,
 } from '../../presage';
+import { SessionCapture } from '../../capture/sessionCapture';
+import type { UploadState } from '../../shared/session-types';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -48,6 +52,10 @@ const ui = {
   summaryBox: $<HTMLDetailsElement>('summary-box'),
   summaryPath: $('summary-path'),
   summaryJson: $('summary-json'),
+  captureBox: $('capture-box'),
+  captureStatus: $('capture-status'),
+  uploadStatus: $('upload-status'),
+  retryUpload: $<HTMLButtonElement>('retry-upload'),
 };
 
 // ---------------------------------------------------------------------------
@@ -81,10 +89,73 @@ if (!host) {
   showError({ code: 'NO_BRIDGE', name: 'PreloadMissing', message: 'window.presageHost is unavailable: the preload script did not load.', retryable: false });
 }
 
+// Debug payload dump (npm run debug:dump). Created once the main process says it's on.
+let dump: PayloadDump | null = null;
+let debugConfig: DebugConfig = { dumpSeconds: null, autorun: false };
+
 const tracker = createPresageTracker({
   apiKey: () => (host ? host.getApiKey() : Promise.reject(new Error('preload bridge unavailable'))),
   ...(host ? { persist: (summary) => host.saveSession(summary) } : {}),
+  onRawMetrics: (buf, tUs) => dump?.onRawMetrics(buf, tUs),
 });
+tracker.onValidation((v) => dump?.onValidation(v));
+tracker.onStatus((s) => dump?.onStatus(s));
+tracker.onStream((s) => dump?.onStream(s));
+
+// Session capture: video + mic recording and per-frame samples, saved to
+// sessions/<id>/ and uploaded to TigerData (see src/capture).
+const captureHost = window.captureHost;
+if (!captureHost) {
+  showError({ code: 'NO_BRIDGE', name: 'PreloadMissing', message: 'window.captureHost is unavailable: sessions will not be recorded.', retryable: false });
+}
+const capture = captureHost ? new SessionCapture(captureHost, { audio: true }) : null;
+tracker.onStream((s) => capture?.attachStream(s));
+tracker.onSample((s) => capture?.addSample(s));
+tracker.onValidation((v) => capture?.addValidation(v));
+let lastCapturedId: string | null = null;
+
+function showUpload(u: UploadState): void {
+  const text: Record<UploadState['status'], string> = {
+    pending: 'Uploading to TigerData…',
+    uploaded: 'Uploaded to TigerData.',
+    failed: `Upload failed: ${u.error ?? 'unknown error'}. The local copy is kept.`,
+    'not-configured': 'Not uploaded: DATABASE_URL is not set. Saved locally only.',
+  };
+  ui.uploadStatus.textContent = text[u.status];
+  ui.uploadStatus.dataset['status'] = u.status;
+  ui.retryUpload.hidden = u.status !== 'failed';
+  ui.retryUpload.disabled = false;
+}
+
+captureHost?.onUploadStatus((e) => {
+  if (e.sessionId === lastCapturedId) showUpload(e.upload);
+});
+ui.retryUpload.addEventListener('click', () => {
+  if (!captureHost || !lastCapturedId) return;
+  ui.retryUpload.disabled = true;
+  showUpload({ status: 'pending', attemptedAt: null, error: null });
+  captureHost.retryUpload(lastCapturedId).then(showUpload, (err: unknown) =>
+    showUpload({ status: 'failed', attemptedAt: null, error: err instanceof Error ? err.message : String(err) }),
+  );
+});
+
+async function finishCapture(): Promise<void> {
+  if (!capture) return;
+  try {
+    const result = await capture.finish();
+    if (!result) return;
+    const { session } = result;
+    lastCapturedId = session.id;
+    const secs = session.durationMs !== null ? `${(session.durationMs / 1000).toFixed(1)} s` : 'unknown length';
+    ui.captureStatus.textContent =
+      `Session ${session.id.slice(0, 8)}: ${secs} of video${session.video.hasAudio ? ' + mic' : ''}, ` +
+      `${session.counts.face} face / ${session.counts.vitals} vitals rows. Saved in sessions/${session.id}/`;
+    ui.captureBox.hidden = false;
+    showUpload(session.upload);
+  } catch (err) {
+    showError({ code: 'CAPTURE_SAVE_FAILED', name: 'CaptureSaveFailed', message: err instanceof Error ? err.message : String(err), retryable: false });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Status + timer
@@ -300,43 +371,84 @@ function resetPanel(): void {
   ui.errors.replaceChildren();
 }
 
-ui.start.addEventListener('click', () => {
+function startSession(): void {
   resetPanel();
   ui.hint.dataset['kind'] = 'tuning';
   ui.hint.textContent = 'Starting camera…';
   sessionStartedAt = Date.now();
   renderTimer();
   timerHandle = window.setInterval(renderTimer, 500);
+  if (host && debugConfig.dumpSeconds !== null) {
+    dump = new PayloadDump(host, debugConfig.dumpSeconds, onDumpDone);
+    dump.start();
+  }
+  capture?.begin();
   tracker.startSession().catch(() => {
-    // Already surfaced through onError.
+    // Already surfaced through onError. Nothing was recorded, so the capture folder is discarded.
+    void finishCapture();
     if (timerHandle !== null) clearInterval(timerHandle);
     ui.hint.dataset['kind'] = 'issue';
     ui.hint.textContent = 'Could not start. See the error above.';
   });
-});
+}
 
-ui.stop.addEventListener('click', () => {
+let stoppingSession = false;
+
+async function stopSession(): Promise<void> {
+  if (stoppingSession) return;
+  stoppingSession = true;
   if (timerHandle !== null) clearInterval(timerHandle);
-  tracker
-    .stopSession()
-    .then(({ summary, savedTo }) => {
-      ui.hint.dataset['kind'] = 'idle';
-      ui.hint.textContent = 'Session saved. Press Start session to go again.';
-      const { series: _series, ...overview } = summary;
-      ui.summaryJson.textContent = JSON.stringify(overview, null, 2);
-      ui.summaryPath.textContent = savedTo ? `Saved to ${savedTo}` : 'Not saved (see errors).';
-      ui.summaryBox.hidden = false;
-      ui.summaryBox.open = true;
-    })
-    .catch((err: unknown) => {
-      showError({ code: 'STOP_FAILED', name: 'StopFailed', message: err instanceof Error ? err.message : String(err), retryable: false });
-    });
-});
+  await dump?.finish();
+  // End the video when Stop was pressed, not after the SDK has drained.
+  await capture?.stopRecording();
+  try {
+    const { summary, savedTo } = await tracker.stopSession();
+    ui.hint.dataset['kind'] = 'idle';
+    ui.hint.textContent = 'Session saved. Press Start session to go again.';
+    const { series: _series, ...overview } = summary;
+    ui.summaryJson.textContent = JSON.stringify(overview, null, 2);
+    ui.summaryPath.textContent = savedTo ? `Saved to ${savedTo}` : 'Not saved (see errors).';
+    ui.summaryBox.hidden = false;
+    ui.summaryBox.open = true;
+  } catch (err) {
+    showError({ code: 'STOP_FAILED', name: 'StopFailed', message: err instanceof Error ? err.message : String(err), retryable: false });
+  } finally {
+    await finishCapture();
+    stoppingSession = false;
+  }
+}
+
+ui.start.addEventListener('click', startSession);
+ui.stop.addEventListener('click', () => void stopSession());
+
+// Unattended debug run: stop the session once the dump is written, then close.
+function onDumpDone(): void {
+  dump = null;
+  if (!debugConfig.autorun) return;
+  void (async () => {
+    if (tracker.sessionActive) await stopSession();
+    window.close();
+  })();
+}
 
 // Window close: main waits for this, so the SDK is stopped (and the partial
 // session saved) before the app exits.
 host?.onShutdownRequest(async () => {
+  await dump?.finish();
+  await capture?.stopRecording();
   await tracker.shutdown();
+  await finishCapture();
 });
 // Reloads (e.g. dev HMR) skip the close handshake; release synchronously.
-window.addEventListener('beforeunload', () => tracker.dispose());
+// Samples and video already flushed stay on disk and are recovered on the next launch.
+window.addEventListener('beforeunload', () => {
+  capture?.dispose();
+  tracker.dispose();
+});
+
+void host?.getDebugConfig().then((cfg) => {
+  debugConfig = cfg;
+  if (cfg.dumpSeconds === null) return;
+  console.info(`[presage debug] payload dump on: ${cfg.dumpSeconds}s per session${cfg.autorun ? ', autorun' : ''}`);
+  if (cfg.autorun) startSession();
+});

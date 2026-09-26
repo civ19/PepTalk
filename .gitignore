@@ -15,3 +15,10 @@ sessions/
 .DS_Store
 *.log
 *.tsbuildinfo
+
+# Debug payload dumps (npm run debug:dump) contain raw face/vitals data.
+debug/
+
+# Session fixtures (npm run export-fixture) hold a real person's face video, voice and vitals.
+# Share them deliberately (git add -f, or a drive link), with that person's consent.
+fixtures/

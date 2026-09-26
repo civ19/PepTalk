@@ -35,6 +35,8 @@ export interface DecodedPacket {
   talking: DetectionReading[];
   expressions: ExpressionReading[];
   landmarks: LandmarksReading | null;
+  /** Every landmark set in the packet, oldest first (packets can carry 2+ frames). */
+  landmarkSets: LandmarksReading[];
   groups: GroupPresence;
 }
 
@@ -158,19 +160,20 @@ function expressionReadings(items: unknown): ExpressionReading[] {
   return out;
 }
 
-function latestLandmarks(items: unknown): LandmarksReading | null {
-  const all = list(items);
-  const last = all[all.length - 1];
-  if (last === undefined) return null;
-  const tUs = toNumber(field(last, 'timestamp'));
-  if (tUs === null) return null;
-  const points: Point2D[] = [];
-  for (const p of list(field(last, 'value'))) {
-    const x = toNumber(field(p, 'x'));
-    const y = toNumber(field(p, 'y'));
-    if (x !== null && y !== null) points.push({ x, y });
+function landmarkReadings(items: unknown): LandmarksReading[] {
+  const out: LandmarksReading[] = [];
+  for (const it of list(items)) {
+    const tUs = toNumber(field(it, 'timestamp'));
+    if (tUs === null) continue;
+    const points: Point2D[] = [];
+    for (const p of list(field(it, 'value'))) {
+      const x = toNumber(field(p, 'x'));
+      const y = toNumber(field(p, 'y'));
+      if (x !== null && y !== null) points.push({ x, y });
+    }
+    out.push({ tUs, points, stable: toBool(field(it, 'stable')), reset: toBool(field(it, 'reset')) });
   }
-  return { tUs, points, stable: toBool(field(last, 'stable')), reset: toBool(field(last, 'reset')) };
+  return out;
 }
 
 /** Decode one `metrics` event buffer into our typed packet. Never throws. */
@@ -186,6 +189,7 @@ export function decodePacket(buf: Uint8Array): DecodeResult {
   }
 
   const face = raw['face'];
+  const landmarkSets = landmarkReadings(field(face, 'landmarks'));
   const cardio = raw['cardio'];
   const breathing = raw['breathing'];
 
@@ -198,7 +202,8 @@ export function decodePacket(buf: Uint8Array): DecodeResult {
       blinking: detectionReadings(field(face, 'blinking')),
       talking: detectionReadings(field(face, 'talking')),
       expressions: expressionReadings(field(face, 'expression')),
-      landmarks: latestLandmarks(field(face, 'landmarks')),
+      landmarks: landmarkSets[landmarkSets.length - 1] ?? null,
+      landmarkSets,
       groups: {
         face: groupHasData(face),
         cardio: groupHasData(cardio),

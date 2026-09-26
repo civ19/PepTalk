@@ -11,13 +11,21 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "verify": "npm run typecheck && npm test && npm run build && node scripts/verify-build.mjs",
-    "package": "npm run build && electron-builder --dir"
+    "package": "npm run build && electron-builder --dir",
+    "debug:dump": "node scripts/debug-dump.mjs",
+    "db:migrate": "node scripts/migrate.mjs",
+    "export-fixture": "node scripts/export-fixture.mjs",
+    "inspect-frame": "node scripts/inspect-frame.mjs"
   },
   "dependencies": {
-    "@smartspectra/node-sdk": "^3.3.0"
+    "@smartspectra/node-sdk": "^3.3.0",
+    "ffmpeg-static": "^5.3.0",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/node": "^24.19.0",
+    "@types/pg": "^8.23.1",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
@@ -65,6 +73,9 @@
           "to": "smartspectra"
         }
       ]
-    }
+    },
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ]
   }
 }

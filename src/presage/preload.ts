@@ -9,7 +9,7 @@
 
 import '@smartspectra/node-sdk/preload';
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, type PresageHostBridge } from './bridge';
+import { IPC, type DebugConfig, type PresageHostBridge } from './bridge';
 
 let shutdownHandler: (() => Promise<void>) | null = null;
 ipcRenderer.on(IPC.shutdownRequest, () => {
@@ -30,6 +30,8 @@ const host: PresageHostBridge = {
   onShutdownRequest: (handler) => {
     shutdownHandler = handler;
   },
+  getDebugConfig: () => ipcRenderer.invoke(IPC.getDebugConfig) as Promise<DebugConfig>,
+  debugAppend: (lines, truncate) => ipcRenderer.invoke(IPC.debugAppend, lines, truncate) as Promise<string>,
 };
 
 contextBridge.exposeInMainWorld('presageHost', host);

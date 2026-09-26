@@ -4,8 +4,11 @@
 // Clock conventions used everywhere in this module:
 //   tUs — SmartSpectra timestamp in microseconds. In Electron the renderer SDK
 //         anchors camera frame times to the Unix epoch once, then keeps them
-//         strictly monotonic, so tUs is both monotonic and comparable to
-//         Date.now() * 1000.
+//         strictly monotonic, so tUs is monotonic and roughly comparable to
+//         Date.now() * 1000. Roughly: the anchor is taken when the SDK reads its
+//         first frame, and measured runs put tUs 65-790 ms ahead of real
+//         capture time. For frame-exact alignment with the recorded video, use
+//         src/capture (see src/capture/clockMatch.ts).
 //   tMs — milliseconds since the session started (SessionSummary.startedAtEpochMs),
 //         i.e. tMs = tUs / 1000 - startedAtEpochMs. A transcript whose offsets are
 //         measured from the same start instant lines up directly.
@@ -96,8 +99,10 @@ export interface PresageSample {
   blinking: DetectionReading[];
   talking: DetectionReading[];
   expressions: ExpressionReading[];
-  /** Latest landmark set in this packet, if any (older sets in the same packet are dropped). */
+  /** Latest landmark set in this packet, if any. */
   landmarks: LandmarksReading | null;
+  /** All landmark sets in this packet, oldest first (a packet can carry 2+ frames). */
+  landmarkSets: LandmarksReading[];
   /** Gaze estimated from `landmarks`; null without landmarks, mid-blink, or if the layout isn't recognized. */
   gaze: GazeReading | null;
   groups: GroupPresence;

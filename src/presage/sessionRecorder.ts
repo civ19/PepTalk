@@ -369,9 +369,10 @@ export function summarizeSession(d: SessionData): SessionSummary {
   });
 
   // --- Face validity + validation issues -----------------------------------
-  // Validation status holds until the next event (the SDK reports changes, not
-  // a fixed-rate stream). Camera-tuning time at start-up is neither valid nor
-  // an issue, so it is left out of the ratio.
+  // Validation status holds until the next event. The SDK repeats the current
+  // status on every processed frame; consecutive events with the same code are
+  // merged below. Camera-tuning time at start-up is neither valid nor an
+  // issue, so it is left out of the ratio.
   const val = [...d.validation].sort((a, b) => a.tUs - b.tUs);
   let validMs = 0;
   let observedMs = 0;

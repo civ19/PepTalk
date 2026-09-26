@@ -11,3 +11,5 @@ export { GAZE, MIN_VITALS_CONFIDENCE } from './constants';
 export { classifyGaze, estimateGaze } from './gaze';
 export type { PresageHostBridge } from './bridge';
 export * from './types';
+export { PayloadDump } from './debugDump';
+export type { DebugConfig } from './bridge';

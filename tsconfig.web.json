@@ -1,10 +1,26 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "types": [],
     "composite": true
   },
-  "include": ["src/renderer/**/*.ts", "src/presage/**/*.ts"],
-  "exclude": ["src/presage/main.ts", "src/presage/preload.ts", "src/presage/**/*.test.ts"]
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/presage/**/*.ts",
+    "src/capture/**/*.ts",
+    "src/shared/**/*.ts"
+  ],
+  "exclude": [
+    "src/presage/main.ts",
+    "src/presage/preload.ts",
+    "src/presage/**/*.test.ts",
+    "src/capture/main/**",
+    "src/capture/preload.ts",
+    "src/capture/**/*.test.ts"
+  ]
 }

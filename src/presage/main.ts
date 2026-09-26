@@ -5,9 +5,9 @@
 import { app, ipcMain, session, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { IPC } from './bridge';
+import { IPC, type DebugConfig } from './bridge';
 
 type SdkMainModule = typeof import('@smartspectra/node-sdk/main');
 
@@ -29,6 +29,8 @@ export interface PresageMain {
   /** Wire the SmartSpectra IPC bridge and harden navigation for a window running the tracker. */
   attachWindow(win: BrowserWindow): void;
   readonly sessionsDir: string;
+  /** Throws unless an IPC call comes from our own page; for other main-process modules' handlers. */
+  assertOwnPage(event: IpcMainInvokeEvent): void;
 }
 
 const NATIVE_LIB: Partial<Record<NodeJS.Platform, string>> = {
@@ -61,6 +63,12 @@ function readApiKey(): string | null {
   }
   const key = process.env['PRESAGE_API_KEY']?.trim();
   return key ? key : null;
+}
+
+function readDebugConfig(): DebugConfig {
+  const secs = Number(process.env['PRESAGE_DEBUG_DUMP_SECONDS'] ?? '');
+  const dumpSeconds = Number.isFinite(secs) && secs > 0 ? secs : null;
+  return { dumpSeconds, autorun: dumpSeconds !== null && process.env['PRESAGE_DEBUG_AUTORUN'] === '1' };
 }
 
 function isoFileStem(epochMs: number): string {
@@ -184,8 +192,26 @@ export function setupPresageMain(options: PresageMainOptions): PresageMain {
     throw new Error(`saveSession: could not find a free file name for ${stem}`);
   });
 
+  // Debug payload dump: PRESAGE_DEBUG_DUMP_SECONDS=60 (see scripts/debug-dump.mjs).
+  const debugConfig = readDebugConfig();
+  const debugFile = join(app.getAppPath(), 'debug', 'payload-dump.ndjson');
+  ipcMain.handle(IPC.getDebugConfig, (event): DebugConfig => {
+    assertOwnPage(event);
+    return debugConfig;
+  });
+  ipcMain.handle(IPC.debugAppend, async (event, lines: unknown, truncate: unknown) => {
+    assertOwnPage(event);
+    if (debugConfig.dumpSeconds === null) throw new Error('debug dump is off');
+    if (!Array.isArray(lines) || !lines.every((l) => typeof l === 'string')) throw new Error('debugAppend: lines must be strings');
+    await mkdir(dirname(debugFile), { recursive: true });
+    const text = lines.length ? `${lines.join('\n')}\n` : '';
+    await writeFile(debugFile, text, { encoding: 'utf8', flag: truncate === true ? 'w' : 'a' });
+    return debugFile;
+  });
+
   return {
     sessionsDir,
+    assertOwnPage,
     attachWindow(win) {
       // Owns one SDK per renderer connection and tears it down (releasing the
       // native session) when the window closes.

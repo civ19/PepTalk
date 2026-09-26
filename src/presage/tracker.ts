@@ -129,6 +129,8 @@ export interface PresageTrackerOptions {
   apiKey: string | (() => Promise<string>);
   /** Where finished session summaries go; see SessionRecorder. */
   persist?: PersistFn;
+  /** Debug hook: every raw `metrics` buffer, before decoding (see debugDump.ts). */
+  onRawMetrics?: (buf: Uint8Array, tUs: number) => void;
 }
 
 export interface PresageTracker {
@@ -345,6 +347,11 @@ class Tracker implements PresageTracker {
   }
 
   private handleMetrics(buf: Uint8Array, tUs: number): void {
+    try {
+      this.options.onRawMetrics?.(buf, tUs);
+    } catch (err) {
+      console.error('[presage] onRawMetrics hook threw', err);
+    }
     const result = decodePacket(buf);
     if (!result.ok) {
       // Log the first few failures; one bad packet shouldn't flood the UI.

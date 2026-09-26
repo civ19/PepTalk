@@ -24,6 +24,7 @@ cp .env.example .env      # then paste your key into .env
 | `PRESAGE_API_KEY` | yes | SmartSpectra API key from <https://physiology.presagetech.com/>. The main process reads it at runtime from the environment or from `.env` in the app directory. It is never bundled. The renderer requests it over IPC (the renderer SDK needs it). |
 | `SMARTSPECTRA_DIAGNOSTICS` | no | `1` turns on the SDK's verbose IPC/frame-pump logging. |
 | `SMARTSPECTRA_CAPI_PATH` | no | Overrides where the native library is loaded from. Packaged builds set this automatically to `resources/smartspectra/`. |
+| `DATABASE_URL` | no | TigerData (Postgres + TimescaleDB) connection string. When set, finished sessions are uploaded; TLS is always on and verified. Without it, sessions stay local. |
 
 `.env` is gitignored. So is `sessions/`, because recorded sessions are personal data.
 
@@ -34,7 +35,11 @@ cp .env.example .env      # then paste your key into .env
 | `npm start` | Builds and launches the app (production build via `electron-vite preview`). |
 | `npm run dev` | Dev server with hot reload. |
 | `npm run verify` | Typecheck (strict, both tsconfigs), unit tests, build, then [post-build checks](scripts/verify-build.mjs): the SDK stays external in main, the preload is sandbox-safe, the native runtime resolves, no `any` outside the adapter, no blood-pressure/clinical wording. |
-| `npm run package` | Unpacked packaged app in `release/` (electron-builder `--dir`). For a packaged app, set `PRESAGE_API_KEY` in the environment, since `.env` is not shipped. |
+| `npm run package` | Unpacked packaged app in `release/` (electron-builder `--dir`). For a packaged app, set `PRESAGE_API_KEY` (and `DATABASE_URL`) in the environment, since `.env` is not shipped. |
+| `npm run db:migrate` | Creates the TigerData tables ([db/migrations/](db/migrations/)). Run once per database. |
+| `npm run export-fixture <id>` | Copies `sessions/<id>/` to `fixtures/<id>/` for developing analytics without a webcam. |
+| `npm run inspect-frame <id> <tMs>...` | Alignment check: writes the video frame at each `tMs` with that moment's eye landmarks drawn on it. `-- --shift=150` draws deliberately misaligned landmarks for comparison. |
+| `npm run debug:dump [-- <secs>]` | Starts a session by itself, writes the first 60 s of raw SDK events to `debug/payload-dump.ndjson`, stops, and closes. `-- --manual` dumps without auto-starting. |
 
 Press **Start session** and sit centered, still and well lit. Press **Stop & save** to write `sessions/<iso-date>.json`. Packaged builds write to `%APPDATA%/presage-vitals-module/sessions/` (or the platform equivalent). Closing the window mid-session also stops the SDK and saves what was recorded.
 
@@ -155,6 +160,35 @@ The numbers above come from a real 77 s test session, except `breathing` and `hr
 
 Tunables are in [src/presage/constants.ts](src/presage/constants.ts): `MIN_VITALS_CONFIDENCE` (defaults are the SDK's own "stable" cut-offs from the data-types docs), `BREATHING_MAX_TALKING_FRACTION` (0.1), `TIMELINE_BUCKET_MS` (10 s), and the watchdog timings.
 
+## Session recording and storage (for analytics)
+
+Every session is also recorded as **video + mic** and **per-frame samples**, all on one clock, so an analytics module can find a moment and play it. The contract is [src/shared/session-types.ts](src/shared/session-types.ts): import its types, don't parse by hand.
+
+```
+sessions/<uuid>/
+  session.json      Session: start time, duration, clock anchor, video info, upload status
+  samples.ndjson    one SampleRecord per line: face (~30/s), vitals, validation changes
+  recording.mp4     H.264 + Opus (or .webm), remuxed with ffmpeg so it is seekable
+```
+
+**The clock.** Every `tMs` is milliseconds since the first frame of `recording.*`. Seek the video to `tMs / 1000` and the face sample with that `tMs` describes that frame. In a test recording, the video's frame timestamps and the stored face-sample `tMs` values lined up frame for frame, within 0.6 ms. Rows are written in arrival order, so sort by `tMs`. Vitals arrive 1-10 s after the moment they describe, and their `tMs` is the moment described.
+
+How that's achieved (from `npm run debug:dump`, see [src/capture/clockMatch.ts](src/capture/clockMatch.ts)):
+- SmartSpectra stamps each frame with Chromium's raw capture timestamp (`VideoFrame.timestamp`) plus a constant it sets from `Date.now()` when its frame loop reads its first frame. That read happens after the SDK's start handshake, so the SDK's "epoch" timestamps ran **65 ms and 786 ms ahead** of real capture time in two runs. They are not trusted directly.
+- Instead, a probe on a clone of the camera track sees the same raw timestamps. SDK timestamps are matched to them frame by frame (exact to ±200 µs), and `tMs` is computed relative to the raw timestamp of the first recorded frame. If matching fails, the session falls back to wall-clock anchoring and says so in `session.json` (`clock.method: 'wall-clock'`).
+- The first Presage reading normally lands at `tMs` ≈ 0.3-1.5 s: the camera, and so the video, starts before the SDK finishes starting up. Each stop logs this as a clock check.
+
+**What's in a sample** (all fields nullable, because the SDK doesn't report every field every frame):
+- `face`: `blinking`, `talking`, `expressions` (8 probabilities summing to 1), `eyeLandmarks` (corners, lids, iris center + contour per eye; MediaPipe indices in `FACE_MESH`, pixel coordinates of the unmirrored frame), `headPose` (unitless yaw/pitch estimates; compare against the session's own median), `gaze` (the eye-contact estimate from [gaze.ts](src/presage/gaze.ts)).
+- `vitals`: pulse, HRV (RMSSD, SDNN, mean NN, Baevsky) and breathing, each with the SDK's 0-100 confidence and `stable` flag. Usually one group per row.
+- `validation`: positioning/signal status (`Ok`, `FaceNotForward`, `ChestNotVisible`, …). The SDK repeats it every frame; only changes are stored.
+
+**Crash safety.** Video chunks are appended every second and samples every 500 ms, as they arrive. If the app dies mid-session, the next launch remuxes what was saved, marks the session `interrupted`, and uploads it.
+
+**TigerData.** With `DATABASE_URL` set and `npm run db:migrate` run once, each stopped session is uploaded in the background: `sessions`, plus `vitals_samples` and `face_samples` (hypertables) and `validation_events`, keyed by `(session_id, t)` with `t = sessions.started_at + t_ms`. It is one transaction per session, and `sessions.uploaded` becomes true only together with the rows. Videos stay local (`recording_uri` is a `file://` path). On failure the local copy is kept. The app shows **Retry upload**, and any session not yet uploaded is retried at the next launch.
+
+**Fixtures.** `npm run export-fixture <id>` copies a session to `fixtures/<id>/` (gitignored: it contains a real face, voice and vitals, so share it only with that person's consent).
+
 ## Known limitations
 
 - **Lighting.** Dim or backlit faces produce `TooDark` / `TooBright` hints and low confidence. In one early test in a dim room, the SDK hit `ProcessingFailed (8)` about 13 s after Running and stopped producing data. I couldn't reproduce it in good light. The app shows the error and keeps **Stop & save** available so the camera can be released and the partial session kept. It does not auto-recover (`reset()`).
@@ -164,5 +198,7 @@ Tunables are in [src/presage/constants.ts](src/presage/constants.ts): `MIN_VITAL
 - **Pulse is a 12 s average.** In testing, the first cardio reading arrived about 16 s after Running, so the cardio watchdog waits 25 s instead of 15 s. Early pulse readings are often low-confidence and are dropped from the summary.
 - **Landmarks** are pixel coordinates in the 1280×720 processed frame and are drawn over the mirrored preview. The SDK logs `Using NORM_RECT without IMAGE_DIMENSIONS is only supported for the square ROI` on every run, which may mean slight distortion of landmark positions on 16:9 frames. They looked roughly aligned in testing.
 - **Readings are sparse and bursty.** Pulse arrived as ~22 readings in 77 s, some in bursts, so the 10 s timeline has empty buckets.
+- **Landmarks are whole pixels.** An eye is ~40-55 px wide at 720p, so iris position (and gaze) moves in steps of ~2% of eye width. Occlusion (a hand or pen near the face) visibly pulls landmarks off; that's the model, not the clock.
+- **Occasional native crash on exit.** Sometimes (1 of 4 test runs) closing the app ends in `FATAL ERROR: Error::ThrowAsJavaScriptException napi_throw` during SDK teardown, after everything was saved. Session data is on disk before this point, and any interrupted upload is retried at the next launch.
 - **Only Windows x64 was run.** macOS/Linux follow the documented paths but are unverified.
 - **The API key reaches the renderer**, because the renderer SDK takes it in its constructor. It is fetched at runtime over IPC (only from our own page), never bundled.

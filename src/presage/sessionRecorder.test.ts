@@ -17,6 +17,7 @@ function sample(partial: Partial<PresageSample> & { at: number }): PresageSample
     talking: [],
     expressions: [],
     landmarks: null,
+    landmarkSets: [],
     gaze: null,
     groups: { face: false, cardio: false, breathing: false },
     ...rest,

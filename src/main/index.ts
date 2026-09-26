@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import { join } from 'node:path';
+import { setupCaptureMain } from '../capture/main';
 import { setupPresageMain, type PresageMain } from '../presage/main';
 
 const rendererFile = join(__dirname, '../renderer/index.html');
@@ -26,9 +27,12 @@ function createWindow(presage: PresageMain): void {
 }
 
 app.whenReady().then(() => {
-  const presage = setupPresageMain({ rendererFile, devServerUrl });
-  console.log(`[main] session summaries will be written to ${presage.sessionsDir}`);
+  // 'audio': the session recording includes the microphone.
+  const presage = setupPresageMain({ rendererFile, devServerUrl, allowedMediaTypes: ['video', 'audio'] });
+  const capture = setupCaptureMain({ sessionsDir: presage.sessionsDir, assertOwnPage: presage.assertOwnPage });
+  console.log(`[main] sessions will be written to ${presage.sessionsDir}`);
   createWindow(presage);
+  void capture.recoverAndUploadPending();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(presage);
   });
