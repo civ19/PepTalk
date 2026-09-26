@@ -1,7 +1,32 @@
-/node_modules/
+# Dependencies
+node_modules/
+
+# Build output
 dist/
+out/
+release/
 coverage/
+*.tsbuildinfo
+
+# Local runtime data (recorded sessions, debug dumps, local DB/video storage)
 data/
+sessions/
+debug/
+
+# Recorded media — never commit interview recordings
+*.mp4
+*.webm
+*.mov
+*.mkv
+
+# Logs
 *.log
+
+# Environment
 .env
+.env.*
+!.env.example
+
+# OS
 .DS_Store
+Thumbs.db
