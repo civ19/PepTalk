@@ -3,11 +3,17 @@
 // backend/db/migrations/001_presage_vital_samples.sql (npm run db:migrate).
 
 import { EXPRESSIONS, type ExpressionPoint } from "../presage/expressions";
-import type { VitalPoint, VitalsResult } from "../presage/vitalsService";
+import type {
+  ValidationPoint,
+  VitalPoint,
+  VitalsResult,
+} from "../presage/vitalsService";
 import type { SqlClient } from "./database";
 
 type Readings = Pick<VitalsResult, "heartRate" | "breathingRate"> & {
   expressions?: ExpressionPoint[];
+  durationSeconds?: number;
+  validation?: ValidationPoint[];
 };
 
 /** An expression_scores entry, in the shape the table already holds: type is Presage's number. */
@@ -29,6 +35,8 @@ export interface VitalSampleRow {
   breathingStable: boolean | null;
   expressionScores: ExpressionScoreEntry[] | null;
   expressionStable: boolean | null;
+  validationCode: number | null;
+  validationHint: string | null;
 }
 
 /** The table's checks reject rates of 0 or below, so those count as no reading. */
@@ -36,8 +44,8 @@ const usable = (point: VitalPoint | undefined): VitalPoint | undefined =>
   point && point.value > 0 ? point : undefined;
 
 /**
- * One row per second with a usable heart or breathing reading or expression
- * scores, in time order. Whatever a second lacks is stored as NULL.
+ * One row per second of video, including warm-up and quality-failure seconds.
+ * A missing or unusable metric stays NULL; never invent a vital reading.
  */
 export function toSampleRows(
   startedAt: Date,
@@ -50,15 +58,33 @@ export function toSampleRows(
   const expressions = new Map(
     (readings.expressions ?? []).map((p) => [p.timeSeconds, p]),
   );
-  const seconds = [
-    ...new Set([...heart.keys(), ...breathing.keys(), ...expressions.keys()]),
-  ].sort((a, b) => a - b);
+  const validation = new Map(
+    (readings.validation ?? []).map((p) => [p.timeSeconds, p]),
+  );
+  const duration = readings.durationSeconds;
+  const seconds =
+    duration === undefined
+      ? [
+          ...new Set([
+            ...heart.keys(),
+            ...breathing.keys(),
+            ...expressions.keys(),
+            ...validation.keys(),
+          ]),
+        ].sort((a, b) => a - b)
+      : Array.from(
+          { length: Math.max(0, Math.floor(duration)) },
+          (_, second) => second,
+        );
   const rows: VitalSampleRow[] = [];
+  let currentValidation: ValidationPoint | undefined;
   for (const second of seconds) {
     const h = usable(heart.get(second));
     const b = usable(breathing.get(second));
     const e = expressions.get(second);
-    if (!h && !b && !e) continue;
+    currentValidation = validation.get(second) ?? currentValidation;
+    if (duration === undefined && !h && !b && !e && !currentValidation)
+      continue;
     rows.push({
       elapsedSeconds: second,
       recordedAt: new Date(startedAt.getTime() + second * 1000).toISOString(),
@@ -77,6 +103,8 @@ export function toSampleRows(
         : null,
       // Expression points are averaged from stable samples only.
       expressionStable: e ? true : null,
+      validationCode: currentValidation?.code ?? null,
+      validationHint: currentValidation?.hint || null,
     });
   }
   return rows;
@@ -110,13 +138,16 @@ export class VitalSamplesRepository {
        )
        INSERT INTO presage_vital_samples
          (session_id, recorded_at, elapsed_seconds, heart_rate_bpm, heart_confidence, heart_stable,
-          breathing_rate_bpm, breathing_confidence, breathing_stable, expression_scores, expression_stable)
+          breathing_rate_bpm, breathing_confidence, breathing_stable, expression_scores, expression_stable,
+          validation_code, validation_hint)
        SELECT $1::uuid, t.recorded_at, t.elapsed_seconds, t.heart_rate_bpm, t.heart_confidence, t.heart_stable,
-              t.breathing_rate_bpm, t.breathing_confidence, t.breathing_stable, t.expression_scores::jsonb, t.expression_stable
+              t.breathing_rate_bpm, t.breathing_confidence, t.breathing_stable, t.expression_scores::jsonb, t.expression_stable,
+              t.validation_code, t.validation_hint
        FROM unnest($2::timestamptz[], $3::int[], $4::float8[], $5::float8[], $6::bool[],
-                   $7::float8[], $8::float8[], $9::bool[], $10::text[], $11::bool[])
+                   $7::float8[], $8::float8[], $9::bool[], $10::text[], $11::bool[], $12::int[], $13::text[])
          AS t(recorded_at, elapsed_seconds, heart_rate_bpm, heart_confidence, heart_stable,
-              breathing_rate_bpm, breathing_confidence, breathing_stable, expression_scores, expression_stable)
+              breathing_rate_bpm, breathing_confidence, breathing_stable, expression_scores, expression_stable,
+              validation_code, validation_hint)
        ON CONFLICT (session_id, recorded_at) DO UPDATE SET
          elapsed_seconds = EXCLUDED.elapsed_seconds,
          heart_rate_bpm = EXCLUDED.heart_rate_bpm,
@@ -126,7 +157,9 @@ export class VitalSamplesRepository {
          breathing_confidence = EXCLUDED.breathing_confidence,
          breathing_stable = EXCLUDED.breathing_stable,
          expression_scores = EXCLUDED.expression_scores,
-         expression_stable = EXCLUDED.expression_stable`,
+         expression_stable = EXCLUDED.expression_stable,
+         validation_code = EXCLUDED.validation_code,
+         validation_hint = EXCLUDED.validation_hint`,
       [
         sessionId,
         recordedAt,
@@ -142,6 +175,8 @@ export class VitalSamplesRepository {
           row.expressionScores ? JSON.stringify(row.expressionScores) : null,
         ),
         rows.map((row) => row.expressionStable),
+        rows.map((row) => row.validationCode),
+        rows.map((row) => row.validationHint),
       ],
     );
     return rows.length;

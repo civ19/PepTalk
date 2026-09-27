@@ -31,9 +31,17 @@ export interface VitalPoint {
   stable: boolean;
 }
 
+export interface ValidationPoint {
+  timeSeconds: number;
+  code: number;
+  hint: string;
+}
+
 export interface VitalsResult {
+  durationSeconds: number;
   heartRate: VitalPoint[];
   breathingRate: VitalPoint[];
+  validation: ValidationPoint[];
   expressions: ExpressionPoint[];
   /** The expression Presage scored highest for the most seconds. */
   dominantExpression: ExpressionName | null;
@@ -119,19 +127,24 @@ export async function analyzeVideo(
       const heartRate = new Map<number, VitalPoint>();
       const breathingRate = new Map<number, VitalPoint>();
       const facing = new Map<number, boolean>();
+      const validation = new Map<number, ValidationPoint>();
       // Per second: each expression's summed score over the stable samples, and how many.
       const expressionSums = new Map<
         number,
         { scores: Record<ExpressionName, number>; samples: number }
       >();
       const hints = new Set<string>();
-      let firstTimestamp: number | undefined;
+      let firstAbsoluteTimestamp: number | undefined;
       const time = (timestamp: number | undefined) => {
-        if (!Number.isFinite(timestamp)) return 0;
-        firstTimestamp ??= timestamp;
+        if (!Number.isFinite(timestamp) || timestamp! < 0) return 0;
+        // Custom input is timestamped from video start. Some SDK payloads use
+        // epoch microseconds instead, so keep a separate origin for those.
+        if (timestamp! < 1_000_000_000_000)
+          return Math.floor(timestamp! / 1_000_000);
+        firstAbsoluteTimestamp ??= timestamp;
         return Math.max(
           0,
-          Math.floor((timestamp! - (firstTimestamp ?? timestamp!)) / 1_000_000),
+          Math.floor((timestamp! - firstAbsoluteTimestamp!) / 1_000_000),
         );
       };
       const collect = (
@@ -193,7 +206,9 @@ export async function analyzeVideo(
           );
         }
       });
-      sdk.on("validationStatus", (code, _timestamp, hint) => {
+      sdk.on("validationStatus", (code, timestamp, hint) => {
+        const second = time(timestamp);
+        validation.set(second, { timeSeconds: second, code, hint: hint ?? "" });
         if (code !== 0 && hint) hints.add(hint);
       });
       sdk.on("error", (_code, message) => {
@@ -237,6 +252,9 @@ export async function analyzeVideo(
       // Drains the pipeline, so the metrics for every pushed frame have arrived.
       await sdk.stopAsync();
       if (failure) throw failure;
+      if (framesSent === 0)
+        throw new Error("No video frames could be decoded.");
+      const durationSeconds = Math.ceil(framesSent / FRAME_RATE);
       const reliableBreaths = [...breathingRate.values()].filter(
         (point) => point.stable && point.confidence >= 60 && point.value > 0,
       );
@@ -262,10 +280,14 @@ export async function analyzeVideo(
           ) as Record<ExpressionName, number>,
         }));
       return {
+        durationSeconds,
         heartRate: [...heartRate.values()].sort(
           (a, b) => a.timeSeconds - b.timeSeconds,
         ),
         breathingRate: [...breathingRate.values()].sort(
+          (a, b) => a.timeSeconds - b.timeSeconds,
+        ),
+        validation: [...validation.values()].sort(
           (a, b) => a.timeSeconds - b.timeSeconds,
         ),
         expressions,

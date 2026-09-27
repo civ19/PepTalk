@@ -1,4 +1,5 @@
 import type { PracticeSession, VitalPoint } from "../types/interview";
+import { projectIdFor } from "./projects";
 
 export interface ConfidenceResult {
   score: number | null;
@@ -86,9 +87,5 @@ export function confidenceFor(session: PracticeSession): ConfidenceResult {
 }
 
 export function samePractice(a: PracticeSession, b: PracticeSession): boolean {
-  return (
-    a.category === b.category &&
-    a.title.trim().toLocaleLowerCase().replace(/\s+/g, " ") ===
-      b.title.trim().toLocaleLowerCase().replace(/\s+/g, " ")
-  );
+  return projectIdFor(a) === projectIdFor(b);
 }
