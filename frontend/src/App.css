@@ -1126,6 +1126,248 @@ textarea::placeholder {
 .library-panel {
   min-height: 390px;
 }
+.history-progress {
+  margin-top: 28px;
+}
+.history-progress-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 18px;
+  margin-bottom: 15px;
+}
+.history-progress-heading h2 {
+  font:
+    800 20px Manrope,
+    sans-serif;
+  margin: 6px 0 4px;
+}
+.history-progress-heading p {
+  color: #8d91a2;
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 0;
+}
+.sample-badge {
+  flex: none;
+  border: 1px solid #e5eaf2;
+  border-radius: 5px;
+  color: #81899a;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  padding: 6px 8px;
+}
+.progress-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.progress-metric-widget {
+  min-width: 0;
+  min-height: 156px;
+  border: 1px solid #eceef3;
+  border-radius: 10px;
+  padding: 15px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.widget-label {
+  color: #8c91a1;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+}
+.widget-value {
+  color: #303348;
+  font:
+    800 22px Manrope,
+    sans-serif;
+  line-height: 1.2;
+  margin-top: 9px;
+}
+.widget-value small {
+  color: #85899a;
+  font:
+    600 10px "DM Sans",
+    sans-serif;
+}
+.activity-heatmap {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 8px);
+  grid-auto-columns: 8px;
+  gap: 4px;
+  margin-top: 13px;
+}
+.activity-cell {
+  border-radius: 2px;
+  background: #edf0f3;
+}
+.activity-cell.level-1 {
+  background: #cde6d8;
+}
+.activity-cell.level-2 {
+  background: #77be99;
+}
+.activity-cell.level-3 {
+  background: #338d65;
+}
+.activity-caption {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  color: #a0a4b1;
+  font-size: 8px;
+  margin-top: 7px;
+}
+.goal-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 0;
+}
+.goal-ring {
+  width: 54px;
+  height: 54px;
+  flex: none;
+  border-radius: 50%;
+  background: conic-gradient(#df9a54 0 80%, #f3ede5 80% 100%);
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+.goal-ring::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: #fff;
+}
+.goal-ring span {
+  position: relative;
+  color: #34364a;
+  font:
+    800 15px Manrope,
+    sans-serif;
+}
+.goal-ring small {
+  color: #999baa;
+  font-size: 9px;
+}
+.goal-content .widget-value {
+  display: block;
+  font-size: 12px;
+  margin: 0;
+}
+.widget-caption,
+.widget-footnote {
+  display: block;
+  color: #9a9eac;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.widget-footnote {
+  margin-top: auto;
+  padding-top: 8px;
+}
+.metric-sparkline {
+  width: 100%;
+  height: 38px;
+  margin-top: 8px;
+  overflow: visible;
+}
+.metric-sparkline path {
+  fill: none;
+  stroke: #e8edf4;
+  stroke-dasharray: 3 4;
+}
+.metric-sparkline polyline {
+  fill: none;
+  stroke: #5487d9;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.metric-sparkline circle {
+  fill: #5487d9;
+  stroke: #fff;
+  stroke-width: 2;
+}
+.filler-mini-bars {
+  height: 40px;
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  margin-top: 7px;
+  padding: 0 2px;
+}
+.filler-mini-bars span {
+  width: 10px;
+  border-radius: 3px 3px 1px 1px;
+  background: linear-gradient(180deg, #e9a17f, #f3d5c7);
+}
+.filler-mini-bars span:last-child {
+  background: #d87d59;
+}
+.filler-widget .widget-footnote b {
+  color: #ae6040;
+}
+.history-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.history-chart-panel {
+  min-width: 0;
+  padding: 20px 20px 14px;
+  background: linear-gradient(155deg, #fff 55%, #f9fbff 100%);
+}
+.history-chart-panel:first-child {
+  border-top: 2px solid #6b9be9;
+}
+.history-chart-panel:last-child {
+  border-top: 2px solid #e39472;
+}
+.history-chart-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.history-chart-title h3 {
+  font:
+    800 14px Manrope,
+    sans-serif;
+  margin: 6px 0 0;
+}
+.chart-change {
+  border-radius: 5px;
+  font-size: 11px;
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+.confidence-change {
+  color: #3f70c0;
+  background: #eaf1fd;
+}
+.habits-change {
+  color: #ae6040;
+  background: #fff0e9;
+}
+.history-chart {
+  height: 230px;
+  margin: 7px -4px 0;
+}
+.history-chart-note {
+  color: #9a9eac;
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 0;
+}
 .count-soft {
   color: #a2b3ce;
   font-size: 13px;
@@ -1608,6 +1850,9 @@ textarea::placeholder {
   }
 }
 @media (max-width: 800px) {
+  .progress-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .sidebar {
     display: none;
   }
@@ -1685,6 +1930,9 @@ textarea::placeholder {
   }
 }
 @media (max-width: 620px) {
+  .history-chart-grid {
+    grid-template-columns: 1fr;
+  }
   .page-heading {
     align-items: flex-start;
     flex-direction: column;
@@ -1771,6 +2019,9 @@ textarea::placeholder {
   }
 }
 @media (max-width: 380px) {
+  .progress-metric-grid {
+    grid-template-columns: 1fr;
+  }
   .stats-grid {
     grid-template-columns: 1fr;
   }

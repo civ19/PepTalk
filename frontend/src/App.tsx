@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { ResponsiveLine } from "@nivo/line";
 import "./App.css";
 import {
   analyzeTranscript,
@@ -184,12 +185,293 @@ function getSpeechConstructor(): SpeechConstructor | undefined {
 }
 
 const categories: PracticeCategory[] = ["Presentation", "Interview", "Pitch"];
+const sampleProgressRuns = [
+  "Run 1",
+  "Run 2",
+  "Run 3",
+  "Run 4",
+  "Run 5",
+  "Run 6",
+];
+const sampleConfidenceTrend = [
+  {
+    id: "Confidence estimate",
+    data: [54, 59, 63, 68, 72, 79].map((value, index) => ({
+      x: sampleProgressRuns[index],
+      y: value,
+    })),
+  },
+];
+const sampleFillerTrend = [
+  {
+    id: "Filler words per minute",
+    data: [8.4, 7.6, 6.3, 5.9, 4.2, 3.1].map((value, index) => ({
+      x: sampleProgressRuns[index],
+      y: value,
+    })),
+  },
+];
 const dateLabel = (date: string) =>
   new Date(date).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
+
+function HistoryProgressCharts() {
+  const chartTheme = {
+    text: { fill: "#7e8496", fontSize: 11, fontFamily: "DM Sans, sans-serif" },
+    axis: {
+      domain: { line: { stroke: "#e8eaf0" } },
+      ticks: { line: { stroke: "#e8eaf0" } },
+    },
+    grid: { line: { stroke: "#eff0f4", strokeDasharray: "3 4" } },
+    crosshair: { line: { stroke: "#abb5c7", strokeDasharray: "4 4" } },
+    tooltip: {
+      container: {
+        background: "#25273c",
+        color: "#fff",
+        fontSize: 12,
+        borderRadius: 6,
+        boxShadow: "0 8px 24px rgba(37, 39, 60, 0.2)",
+      },
+    },
+  };
+
+  return (
+    <section
+      className="history-progress"
+      aria-labelledby="history-progress-title"
+    >
+      <div className="history-progress-heading">
+        <div>
+          <span className="section-eyebrow">THE BIGGER PICTURE</span>
+          <h2 id="history-progress-title">Progress over time</h2>
+          <p>
+            Illustrative sample trends, not calculated from your saved sessions.
+          </p>
+        </div>
+        <span className="sample-badge">SAMPLE DATA</span>
+      </div>
+      <div className="progress-metric-grid">
+        <article className="progress-metric-widget activity-widget">
+          <span className="widget-label">PRACTICE RHYTHM</span>
+          <strong className="widget-value">
+            11 <small>active days</small>
+          </strong>
+          <div
+            className="activity-heatmap"
+            role="img"
+            aria-label="Sample activity map showing 11 practice days across four weeks"
+          >
+            {[
+              0, 1, 0, 2, 0, 1, 0, 1, 2, 3, 0, 0, 1, 0, 2, 0, 1, 3, 2, 0, 1, 0,
+              2, 3, 0, 1, 2, 3,
+            ].map((level, dayIndex) => (
+              <span key={dayIndex} className={`activity-cell level-${level}`} />
+            ))}
+          </div>
+          <div className="activity-caption">
+            <span>4 weeks ago</span>
+            <span>This week</span>
+          </div>
+        </article>
+        <article className="progress-metric-widget goal-widget">
+          <span className="widget-label">WEEKLY FOCUS</span>
+          <div className="goal-content">
+            <div className="goal-ring" aria-label="4 of 5 practice runs">
+              <span>
+                4<small>/5</small>
+              </span>
+            </div>
+            <div>
+              <strong className="widget-value">On your way</strong>
+              <span className="widget-caption">practice runs this week</span>
+            </div>
+          </div>
+          <span className="widget-footnote">
+            One more run to reach your goal
+          </span>
+        </article>
+        <article className="progress-metric-widget pace-widget">
+          <span className="widget-label">SPEAKING PACE</span>
+          <strong className="widget-value">
+            142 <small>WPM average</small>
+          </strong>
+          <svg
+            className="metric-sparkline pace-sparkline"
+            viewBox="0 0 180 42"
+            role="img"
+            aria-label="Sample speaking pace gradually increasing across six runs"
+            preserveAspectRatio="none"
+          >
+            <path d="M0 35H180" />
+            <polyline points="2,31 37,26 73,28 109,18 145,14 178,6" />
+            <circle cx="178" cy="6" r="3.5" />
+          </svg>
+          <span className="widget-footnote">
+            Steadier through the last 3 runs
+          </span>
+        </article>
+        <article className="progress-metric-widget filler-widget">
+          <span className="widget-label">FILLER WORD RATE</span>
+          <strong className="widget-value">
+            3.1 <small>per minute</small>
+          </strong>
+          <div
+            className="filler-mini-bars"
+            role="img"
+            aria-label="Sample filler-word rate falling across six runs"
+          >
+            {[34, 29, 24, 22, 16, 11].map((height, runIndex) => (
+              <span key={runIndex} style={{ height: `${height}px` }} />
+            ))}
+          </div>
+          <span className="widget-footnote">
+            <b>−63%</b> across six sample runs
+          </span>
+        </article>
+      </div>
+      <div className="history-chart-grid">
+        <section
+          className="panel history-chart-panel"
+          aria-label="Confidence trend chart"
+        >
+          <div className="history-chart-title">
+            <div>
+              <span className="section-eyebrow">DELIVERY</span>
+              <h3>Confidence estimate</h3>
+            </div>
+            <strong className="chart-change confidence-change">+25 pts</strong>
+          </div>
+          <div className="history-chart">
+            <ResponsiveLine
+              data={sampleConfidenceTrend}
+              margin={{ top: 14, right: 18, bottom: 54, left: 42 }}
+              xScale={{ type: "point" }}
+              yScale={{ type: "linear", min: 0, max: 100, stacked: false }}
+              curve="monotoneX"
+              axisTop={null}
+              axisRight={null}
+              axisBottom={{
+                tickSize: 0,
+                tickPadding: 10,
+                format: (value) =>
+                  String(value).replace("Run ", "").padStart(2, "0"),
+                legend: "PRACTICE ATTEMPT",
+                legendPosition: "middle",
+                legendOffset: 40,
+              }}
+              axisLeft={{
+                tickSize: 0,
+                tickPadding: 9,
+                tickValues: [0, 25, 50, 75, 100],
+                format: (value) => `${value}%`,
+              }}
+              enableGridY={false}
+              enableGridX={false}
+              colors={["#5187e0"]}
+              lineWidth={3.5}
+              enableArea
+              areaOpacity={0.16}
+              defs={[
+                {
+                  id: "confidenceGradient",
+                  type: "linearGradient",
+                  colors: [
+                    { offset: 0, color: "#5187e0", opacity: 0.3 },
+                    { offset: 100, color: "#5187e0", opacity: 0.01 },
+                  ],
+                },
+              ]}
+              fill={[
+                {
+                  match: { id: "Confidence estimate" },
+                  id: "confidenceGradient",
+                },
+              ]}
+              pointSize={9}
+              pointColor={{ from: "color" }}
+              pointBorderWidth={3}
+              pointBorderColor={{ from: "background" }}
+              enableSlices="x"
+              useMesh
+              motionConfig="gentle"
+              theme={chartTheme}
+              ariaLabel="Illustrative confidence estimates increasing from 54 to 79 across six practice runs"
+            />
+          </div>
+          <p className="history-chart-note">
+            A sample score based on speech and body signals.
+          </p>
+        </section>
+        <section
+          className="panel history-chart-panel"
+          aria-label="Filler word trend chart"
+        >
+          <div className="history-chart-title">
+            <div>
+              <span className="section-eyebrow">SPEAKING HABITS</span>
+              <h3>Filler words per minute</h3>
+            </div>
+            <strong className="chart-change habits-change">−63%</strong>
+          </div>
+          <div className="history-chart">
+            <ResponsiveLine
+              data={sampleFillerTrend}
+              margin={{ top: 14, right: 18, bottom: 46, left: 42 }}
+              xScale={{ type: "point" }}
+              yScale={{ type: "linear", min: 0, max: 10, stacked: false }}
+              curve="monotoneX"
+              axisTop={null}
+              axisRight={null}
+              axisBottom={{ tickSize: 0, tickPadding: 12 }}
+              axisLeft={{
+                tickSize: 0,
+                tickPadding: 9,
+                tickValues: [0, 2, 4, 6, 8, 10],
+              }}
+              enableGridY={false}
+              enableGridX={false}
+              colors={["#df815e"]}
+              lineWidth={3.5}
+              enableArea
+              areaOpacity={0.16}
+              defs={[
+                {
+                  id: "habitsGradient",
+                  type: "linearGradient",
+                  colors: [
+                    { offset: 0, color: "#df815e", opacity: 0.3 },
+                    { offset: 100, color: "#df815e", opacity: 0.01 },
+                  ],
+                },
+              ]}
+              fill={[
+                {
+                  match: { id: "Filler words per minute" },
+                  id: "habitsGradient",
+                },
+              ]}
+              pointSize={9}
+              pointColor={{ from: "color" }}
+              pointBorderWidth={3}
+              pointBorderColor={{ from: "background" }}
+              enableSlices="x"
+              useMesh
+              motionConfig="gentle"
+              theme={chartTheme}
+              ariaLabel="Illustrative filler words per minute decreasing from 8.4 to 3.1 across six practice runs"
+            />
+          </div>
+          <p className="history-chart-note">
+            A sample count normalized by speaking time.
+          </p>
+        </section>
+      </div>
+    </section>
+  );
+}
 
 function TrendChart({ sessions }: { sessions: PracticeSession[] }) {
   const points = [...sessions].reverse().slice(-7);
@@ -2091,6 +2373,7 @@ export default function App() {
                   )}
                 </section>
               )}
+              <HistoryProgressCharts />
             </>
           )}
         </div>
