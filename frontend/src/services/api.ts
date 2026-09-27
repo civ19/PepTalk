@@ -1,10 +1,12 @@
 import type {
   FillerWord,
+  PracticeProject,
   PracticeSession,
   VitalsResult,
 } from "../types/interview";
 
 const SESSION_KEY = "preptalk.sessions.v1";
+const PROJECT_KEY = "preptalk.projects.v1";
 const DB_NAME = "preptalk-recordings";
 const STORE_NAME = "recordings";
 
@@ -21,6 +23,21 @@ export function getSessions(): PracticeSession[] {
 
 export function saveSessions(sessions: PracticeSession[]): void {
   localStorage.setItem(SESSION_KEY, JSON.stringify(sessions));
+}
+
+export function getSavedProjects(): PracticeProject[] {
+  try {
+    const parsed: unknown = JSON.parse(
+      localStorage.getItem(PROJECT_KEY) ?? "[]",
+    );
+    return Array.isArray(parsed) ? (parsed as PracticeProject[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveProjects(projects: PracticeProject[]): void {
+  localStorage.setItem(PROJECT_KEY, JSON.stringify(projects));
 }
 
 function openRecordingDb(): Promise<IDBDatabase> {
@@ -74,6 +91,22 @@ export async function deleteRecording(id: string): Promise<void> {
       transaction.objectStore(STORE_NAME).delete(id);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Remove every locally stored recording, including orphaned videos. */
+export async function deleteAllRecordings(): Promise<void> {
+  const db = await openRecordingDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).clear();
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
     });
   } finally {
     db.close();

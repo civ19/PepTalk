@@ -1,5 +1,12 @@
 export type PracticeCategory = "Presentation" | "Interview" | "Pitch";
 
+export interface PracticeProject {
+  id: string;
+  name: string;
+  category: PracticeCategory;
+  createdAt: string;
+}
+
 export interface FillerWord {
   phrase: string;
   count: number;
@@ -30,8 +37,10 @@ export interface ExpressionShare {
 }
 
 export interface VitalsResult {
+  durationSeconds?: number;
   heartRate: VitalPoint[];
   breathingRate: VitalPoint[];
+  validation?: { timeSeconds: number; code: number; hint: string }[];
   /** Missing on sessions analyzed before expressions were measured. */
   dominantExpression?: ExpressionName | null;
   expressionShares?: ExpressionShare[];
@@ -43,6 +52,7 @@ export interface VitalsResult {
 
 export interface PracticeSession {
   id: string;
+  projectId?: string;
   title: string;
   category: PracticeCategory;
   createdAt: string;

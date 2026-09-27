@@ -1,22 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ResponsiveLine } from "@nivo/line";
 import "./App.css";
+import HistoryProgressCharts from "./components/HistoryProgressCharts";
 import {
   analyzeTranscript,
   analyzeVitals,
+  deleteAllRecordings,
   deleteRecording,
   getRecording,
+  getSavedProjects,
   getSessions,
   saveRecording,
+  saveProjects,
   saveSessions,
   transcribeRecording,
 } from "./services/api";
-import type { PracticeCategory, PracticeSession } from "./types/interview";
+import type {
+  PracticeCategory,
+  PracticeProject,
+  PracticeSession,
+} from "./types/interview";
 import { extractMetrics, formatDuration } from "./utils/videoMetrics";
 import { confidenceFor, samePractice } from "./utils/confidence";
 import { breathingNote, dominantExpression } from "./utils/bodySignals";
+import { projectIdFor, projectsFor, sessionsInProject } from "./utils/projects";
+import { trendFor } from "./utils/trends";
 
 type Page = "overview" | "practice" | "recording" | "history";
 const pagePath: Record<Exclude<Page, "recording">, string> = {
@@ -185,32 +194,6 @@ function getSpeechConstructor(): SpeechConstructor | undefined {
 }
 
 const categories: PracticeCategory[] = ["Presentation", "Interview", "Pitch"];
-const sampleProgressRuns = [
-  "Run 1",
-  "Run 2",
-  "Run 3",
-  "Run 4",
-  "Run 5",
-  "Run 6",
-];
-const sampleConfidenceTrend = [
-  {
-    id: "Confidence estimate",
-    data: [54, 59, 63, 68, 72, 79].map((value, index) => ({
-      x: sampleProgressRuns[index],
-      y: value,
-    })),
-  },
-];
-const sampleFillerTrend = [
-  {
-    id: "Filler words per minute",
-    data: [8.4, 7.6, 6.3, 5.9, 4.2, 3.1].map((value, index) => ({
-      x: sampleProgressRuns[index],
-      y: value,
-    })),
-  },
-];
 const dateLabel = (date: string) =>
   new Date(date).toLocaleDateString(undefined, {
     month: "short",
@@ -218,263 +201,8 @@ const dateLabel = (date: string) =>
     year: "numeric",
   });
 
-function HistoryProgressCharts() {
-  const chartTheme = {
-    text: { fill: "#7e8496", fontSize: 11, fontFamily: "DM Sans, sans-serif" },
-    axis: {
-      domain: { line: { stroke: "#e8eaf0" } },
-      ticks: { line: { stroke: "#e8eaf0" } },
-    },
-    grid: { line: { stroke: "#eff0f4", strokeDasharray: "3 4" } },
-    crosshair: { line: { stroke: "#abb5c7", strokeDasharray: "4 4" } },
-    tooltip: {
-      container: {
-        background: "#25273c",
-        color: "#fff",
-        fontSize: 12,
-        borderRadius: 6,
-        boxShadow: "0 8px 24px rgba(37, 39, 60, 0.2)",
-      },
-    },
-  };
-
-  return (
-    <section
-      className="history-progress"
-      aria-labelledby="history-progress-title"
-    >
-      <div className="history-progress-heading">
-        <div>
-          <span className="section-eyebrow">THE BIGGER PICTURE</span>
-          <h2 id="history-progress-title">Progress over time</h2>
-          <p>
-            Illustrative sample trends, not calculated from your saved sessions.
-          </p>
-        </div>
-        <span className="sample-badge">SAMPLE DATA</span>
-      </div>
-      <div className="progress-metric-grid">
-        <article className="progress-metric-widget activity-widget">
-          <span className="widget-label">PRACTICE RHYTHM</span>
-          <strong className="widget-value">
-            11 <small>active days</small>
-          </strong>
-          <div
-            className="activity-heatmap"
-            role="img"
-            aria-label="Sample activity map showing 11 practice days across four weeks"
-          >
-            {[
-              0, 1, 0, 2, 0, 1, 0, 1, 2, 3, 0, 0, 1, 0, 2, 0, 1, 3, 2, 0, 1, 0,
-              2, 3, 0, 1, 2, 3,
-            ].map((level, dayIndex) => (
-              <span key={dayIndex} className={`activity-cell level-${level}`} />
-            ))}
-          </div>
-          <div className="activity-caption">
-            <span>4 weeks ago</span>
-            <span>This week</span>
-          </div>
-        </article>
-        <article className="progress-metric-widget goal-widget">
-          <span className="widget-label">WEEKLY FOCUS</span>
-          <div className="goal-content">
-            <div className="goal-ring" aria-label="4 of 5 practice runs">
-              <span>
-                4<small>/5</small>
-              </span>
-            </div>
-            <div>
-              <strong className="widget-value">On your way</strong>
-              <span className="widget-caption">practice runs this week</span>
-            </div>
-          </div>
-          <span className="widget-footnote">
-            One more run to reach your goal
-          </span>
-        </article>
-        <article className="progress-metric-widget pace-widget">
-          <span className="widget-label">SPEAKING PACE</span>
-          <strong className="widget-value">
-            142 <small>WPM average</small>
-          </strong>
-          <svg
-            className="metric-sparkline pace-sparkline"
-            viewBox="0 0 180 42"
-            role="img"
-            aria-label="Sample speaking pace gradually increasing across six runs"
-            preserveAspectRatio="none"
-          >
-            <path d="M0 35H180" />
-            <polyline points="2,31 37,26 73,28 109,18 145,14 178,6" />
-            <circle cx="178" cy="6" r="3.5" />
-          </svg>
-          <span className="widget-footnote">
-            Steadier through the last 3 runs
-          </span>
-        </article>
-        <article className="progress-metric-widget filler-widget">
-          <span className="widget-label">FILLER WORD RATE</span>
-          <strong className="widget-value">
-            3.1 <small>per minute</small>
-          </strong>
-          <div
-            className="filler-mini-bars"
-            role="img"
-            aria-label="Sample filler-word rate falling across six runs"
-          >
-            {[34, 29, 24, 22, 16, 11].map((height, runIndex) => (
-              <span key={runIndex} style={{ height: `${height}px` }} />
-            ))}
-          </div>
-          <span className="widget-footnote">
-            <b>−63%</b> across six sample runs
-          </span>
-        </article>
-      </div>
-      <div className="history-chart-grid">
-        <section
-          className="panel history-chart-panel"
-          aria-label="Confidence trend chart"
-        >
-          <div className="history-chart-title">
-            <div>
-              <span className="section-eyebrow">DELIVERY</span>
-              <h3>Confidence estimate</h3>
-            </div>
-            <strong className="chart-change confidence-change">+25 pts</strong>
-          </div>
-          <div className="history-chart">
-            <ResponsiveLine
-              data={sampleConfidenceTrend}
-              margin={{ top: 14, right: 18, bottom: 54, left: 42 }}
-              xScale={{ type: "point" }}
-              yScale={{ type: "linear", min: 0, max: 100, stacked: false }}
-              curve="monotoneX"
-              axisTop={null}
-              axisRight={null}
-              axisBottom={{
-                tickSize: 0,
-                tickPadding: 10,
-                format: (value: number) =>
-                  String(value).replace("Run ", "").padStart(2, "0"),
-                legend: "PRACTICE ATTEMPT",
-                legendPosition: "middle",
-                legendOffset: 40,
-              }}
-              axisLeft={{
-                tickSize: 0,
-                tickPadding: 9,
-                tickValues: [0, 25, 50, 75, 100],
-                format: (value: number) => `${value}%`,
-              }}
-              enableGridY={false}
-              enableGridX={false}
-              colors={["#5187e0"]}
-              lineWidth={3.5}
-              enableArea
-              areaOpacity={0.16}
-              defs={[
-                {
-                  id: "confidenceGradient",
-                  type: "linearGradient",
-                  colors: [
-                    { offset: 0, color: "#5187e0", opacity: 0.3 },
-                    { offset: 100, color: "#5187e0", opacity: 0.01 },
-                  ],
-                },
-              ]}
-              fill={[
-                {
-                  match: { id: "Confidence estimate" },
-                  id: "confidenceGradient",
-                },
-              ]}
-              pointSize={9}
-              pointColor={{ from: "color" }}
-              pointBorderWidth={3}
-              pointBorderColor={{ from: "background" }}
-              enableSlices="x"
-              useMesh
-              motionConfig="gentle"
-              theme={chartTheme}
-              ariaLabel="Illustrative confidence estimates increasing from 54 to 79 across six practice runs"
-            />
-          </div>
-          <p className="history-chart-note">
-            A sample score based on speech and body signals.
-          </p>
-        </section>
-        <section
-          className="panel history-chart-panel"
-          aria-label="Filler word trend chart"
-        >
-          <div className="history-chart-title">
-            <div>
-              <span className="section-eyebrow">SPEAKING HABITS</span>
-              <h3>Filler words per minute</h3>
-            </div>
-            <strong className="chart-change habits-change">−63%</strong>
-          </div>
-          <div className="history-chart">
-            <ResponsiveLine
-              data={sampleFillerTrend}
-              margin={{ top: 14, right: 18, bottom: 46, left: 42 }}
-              xScale={{ type: "point" }}
-              yScale={{ type: "linear", min: 0, max: 10, stacked: false }}
-              curve="monotoneX"
-              axisTop={null}
-              axisRight={null}
-              axisBottom={{ tickSize: 0, tickPadding: 12 }}
-              axisLeft={{
-                tickSize: 0,
-                tickPadding: 9,
-                tickValues: [0, 2, 4, 6, 8, 10],
-              }}
-              enableGridY={false}
-              enableGridX={false}
-              colors={["#df815e"]}
-              lineWidth={3.5}
-              enableArea
-              areaOpacity={0.16}
-              defs={[
-                {
-                  id: "habitsGradient",
-                  type: "linearGradient",
-                  colors: [
-                    { offset: 0, color: "#df815e", opacity: 0.3 },
-                    { offset: 100, color: "#df815e", opacity: 0.01 },
-                  ],
-                },
-              ]}
-              fill={[
-                {
-                  match: { id: "Filler words per minute" },
-                  id: "habitsGradient",
-                },
-              ]}
-              pointSize={9}
-              pointColor={{ from: "color" }}
-              pointBorderWidth={3}
-              pointBorderColor={{ from: "background" }}
-              enableSlices="x"
-              useMesh
-              motionConfig="gentle"
-              theme={chartTheme}
-              ariaLabel="Illustrative filler words per minute decreasing from 8.4 to 3.1 across six practice runs"
-            />
-          </div>
-          <p className="history-chart-note">
-            A sample count normalized by speaking time.
-          </p>
-        </section>
-      </div>
-    </section>
-  );
-}
-
 function TrendChart({ sessions }: { sessions: PracticeSession[] }) {
-  const points = [...sessions].reverse().slice(-7);
+  const points = trendFor(sessions, "pace").slice(-7);
   if (!points.length) {
     return (
       <div className="chart-empty">
@@ -486,13 +214,10 @@ function TrendChart({ sessions }: { sessions: PracticeSession[] }) {
       </div>
     );
   }
-  const max = Math.max(
-    180,
-    ...points.map((session) => session.wordsPerMinute + 20),
-  );
+  const max = Math.max(180, ...points.map((point) => point.value + 20));
   const coords = points.map((session, index) => ({
     x: points.length === 1 ? 300 : 48 + (index * 504) / (points.length - 1),
-    y: 188 - (session.wordsPerMinute / max) * 142,
+    y: 188 - (session.value / max) * 142,
   }));
   const line = coords.map((point) => `${point.x},${point.y}`).join(" ");
   return (
@@ -522,7 +247,7 @@ function TrendChart({ sessions }: { sessions: PracticeSession[] }) {
           />
         )}
         {coords.map((point, index) => (
-          <g key={points[index].id}>
+          <g key={points[index].session.id}>
             <circle
               cx={point.x}
               cy={point.y}
@@ -532,15 +257,15 @@ function TrendChart({ sessions }: { sessions: PracticeSession[] }) {
               strokeWidth="3"
             />
             <title>
-              {points[index].wordsPerMinute} WPM ·{" "}
-              {dateLabel(points[index].createdAt)}
+              {Math.round(points[index].value)} WPM ·{" "}
+              {dateLabel(points[index].session.createdAt)}
             </title>
           </g>
         ))}
       </svg>
       <div className="chart-x-labels">
-        <span>{dateLabel(points[0].createdAt)}</span>
-        <span>{dateLabel(points[points.length - 1].createdAt)}</span>
+        <span>{dateLabel(points[0].session.createdAt)}</span>
+        <span>{dateLabel(points[points.length - 1].session.createdAt)}</span>
       </div>
     </div>
   );
@@ -575,12 +300,83 @@ function SessionRow({
   );
 }
 
+function ProjectCards({
+  projects,
+  sessions,
+  activeId,
+  onSelect,
+}: {
+  projects: PracticeProject[];
+  sessions: PracticeSession[];
+  activeId?: string;
+  onSelect: (id: string) => void;
+}) {
+  if (!projects.length) return null;
+  return (
+    <div className="project-grid" aria-label="Practice projects">
+      {projects.map((project) => {
+        const attempts = sessionsInProject(sessions, project.id).sort((a, b) =>
+          a.createdAt.localeCompare(b.createdAt),
+        );
+        const scored = trendFor(attempts, "confidence").map(
+          (point) => point.value,
+        );
+        const latest = scored.at(-1) ?? null;
+        const change = scored.length > 1 ? latest! - scored[0] : null;
+        const stage =
+          latest === null
+            ? "unscored"
+            : latest < 50
+              ? "red"
+              : latest < 75
+                ? "yellow"
+                : "green";
+        return (
+          <button
+            key={project.id}
+            type="button"
+            className={`project-card ${activeId === project.id ? "active" : ""}`}
+            onClick={() => onSelect(project.id)}
+          >
+            <span className="project-card-top">
+              <span className="project-category">{project.category}</span>
+              <span>
+                {attempts.length} {attempts.length === 1 ? "run" : "runs"}
+              </span>
+            </span>
+            <strong>{project.name}</strong>
+            <span className="project-stage">
+              <i className={`stage-dot ${stage}`} />
+              {latest === null
+                ? "Awaiting first score"
+                : `${latest}/100 · ${stage === "red" ? "Build" : stage === "yellow" ? "Develop" : "Strong"}`}
+            </span>
+            <span className="project-scale" aria-hidden="true">
+              <i className="scale-red" />
+              <i className="scale-yellow" />
+              <i className="scale-green" />
+              {latest !== null && <b style={{ left: `${latest}%` }} />}
+            </span>
+            <small>
+              {change === null
+                ? "Record more runs to see improvement"
+                : `${change > 0 ? "+" : ""}${change} points since first scored run`}
+            </small>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function PracticeProgress({
   session,
   sessions,
+  projectName,
 }: {
   session: PracticeSession;
   sessions: PracticeSession[];
+  projectName: string;
 }) {
   const attempts = sessions
     .filter((item) => samePractice(item, session))
@@ -642,7 +438,7 @@ function PracticeProgress({
         <span>Strong</span>
       </div>
       <p className="progress-comparison">
-        Attempt {currentIndex + 1} of {attempts.length} for “{session.title}”
+        Attempt {currentIndex + 1} of {attempts.length} in “{projectName}”
         {delta !== null
           ? ` · ${delta > 0 ? "+" : ""}${delta} points vs previous attempt`
           : " · First scored attempt"}
@@ -758,6 +554,13 @@ function VitalSummary({
       <h3>
         Body signals <small>Presage</small>
       </h3>
+      {vitals?.durationSeconds ? (
+        <p className="vital-hints">
+          {vitals.durationSeconds} seconds analyzed ·{" "}
+          {reliable(vitals.heartRate).length} reliable pulse readings ·{" "}
+          {reliable(vitals.breathingRate).length} reliable breathing readings
+        </p>
+      ) : null}
       <div className="vital-row">
         <span>Heart rate</span>
         <strong>
@@ -834,14 +637,27 @@ export default function App() {
     pageFromPath(window.location.pathname),
   );
   const [sessions, setSessions] = useState<PracticeSession[]>(getSessions);
+  const [savedProjects, setSavedProjects] =
+    useState<PracticeProject[]>(getSavedProjects);
+  const projects = useMemo(
+    () => projectsFor(sessions, savedProjects),
+    [sessions, savedProjects],
+  );
+  const [projectId, setProjectId] = useState("");
+  const [historyProjectId, setHistoryProjectId] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
   const sessionsRef = useRef(sessions);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
   const [recordingLoading, setRecordingLoading] = useState(false);
+  const [deletingRecordings, setDeletingRecordings] = useState(false);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<PracticeCategory>("Presentation");
   const [isRecording, setIsRecording] = useState(false);
   const [isRequesting, setIsRequesting] = useState(false);
+  const [hasPreview, setHasPreview] = useState(false);
+  const [setupConfirmed, setSetupConfirmed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -854,6 +670,8 @@ export default function App() {
         ? "dark"
         : "light";
   });
+  const logoSrc =
+    theme === "dark" ? "/dark-mode-icon.png" : "/light-mode-icon.png";
   const [elapsed, setElapsed] = useState(0);
   const [transcript, setTranscript] = useState("");
   const [draftTranscript, setDraftTranscript] = useState("");
@@ -871,14 +689,21 @@ export default function App() {
 
   const selected =
     sessions.find((session) => session.id === selectedId) ?? null;
+  const selectedProject = projects.find((project) => project.id === projectId);
+  const activeHistoryProject =
+    projects.find((project) => project.id === historyProjectId) ?? projects[0];
+  const projectSessions = activeHistoryProject
+    ? sessionsInProject(sessions, activeHistoryProject.id)
+    : [];
   const totalMinutes = Math.round(
     sessions.reduce((total, session) => total + session.durationSeconds, 0) /
       60,
   );
-  const averageWpm = sessions.length
+  const measuredPace = trendFor(sessions, "pace");
+  const averageWpm = measuredPace.length
     ? Math.round(
-        sessions.reduce((total, session) => total + session.wordsPerMinute, 0) /
-          sessions.length,
+        measuredPace.reduce((total, point) => total + point.value, 0) /
+          measuredPace.length,
       )
     : 0;
   const liveMetrics = useMemo(
@@ -891,20 +716,61 @@ export default function App() {
     setSessions(next);
     try {
       saveSessions(next);
+      return true;
     } catch {
       setStatus(
         "Session details could not be saved in this browser. Check available storage.",
       );
+      return false;
     }
   }, []);
+
+  useEffect(() => {
+    if (
+      projects.length &&
+      !projects.some((project) => project.id === projectId)
+    ) {
+      setProjectId(projects[0].id);
+    }
+  }, [projects, projectId]);
+
+  function createProject() {
+    const name = newProjectName.trim();
+    if (!name) {
+      setStatus("Give your project a name first.");
+      return;
+    }
+    const project: PracticeProject = {
+      id: crypto.randomUUID(),
+      name,
+      category,
+      createdAt: new Date().toISOString(),
+    };
+    const next = [project, ...savedProjects];
+    try {
+      saveProjects(next);
+    } catch {
+      setStatus(
+        "The project could not be saved in this browser. Check available storage.",
+      );
+      return;
+    }
+    setSavedProjects(next);
+    setProjectId(project.id);
+    setHistoryProjectId(project.id);
+    setNewProjectName("");
+    setCreatingProject(false);
+    setStatus("");
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute("content", theme === "dark" ? "#0c172b" : "#f4f8ff");
+    document.querySelector('link[rel="icon"]')?.setAttribute("href", logoSrc);
     localStorage.setItem("preptalk.theme", theme);
-  }, [theme]);
+  }, [theme, logoSrc]);
 
   useEffect(() => {
     if (!isRecording) return;
@@ -980,6 +846,12 @@ export default function App() {
         setStatus("Finish this recording before leaving the studio.");
         return;
       }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        setHasPreview(false);
+        setSetupConfirmed(false);
+      }
       setPage(pageFromPath(window.location.pathname));
       setSelectedId(null);
       setStatus("");
@@ -994,6 +866,13 @@ export default function App() {
       setStatus("Finish saving this recording before leaving the studio.");
       return;
     }
+    if (page === "recording") {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
+      setHasPreview(false);
+      setSetupConfirmed(false);
+    }
     if (window.location.pathname !== pagePath[next]) {
       window.history.pushState(null, "", pagePath[next]);
     }
@@ -1005,6 +884,7 @@ export default function App() {
   const openSession = useCallback((id: string, preserveStatus = false) => {
     setSelectedId(id);
     const session = sessionsRef.current.find((item) => item.id === id);
+    if (session) setHistoryProjectId(projectIdFor(session));
     setDraftTranscript(session?.transcript ?? "");
     window.history.pushState(null, "", "/history");
     setPage("history");
@@ -1017,23 +897,24 @@ export default function App() {
   }, []);
 
   function enterRecording() {
+    if (!selectedProject) {
+      setStatus("Choose or create a project first.");
+      return;
+    }
     if (!title.trim()) {
       setStatus("Give this practice run a name first.");
       return;
     }
     captureRequestedRef.current = true;
     setIsRequesting(true);
+    setSetupConfirmed(false);
+    setHasPreview(false);
     window.history.pushState(null, "", "/practice/record");
     setPage("recording");
     setStatus("");
   }
 
-  const startRecording = useCallback(async () => {
-    if (!title.trim()) {
-      setStatus("Give this practice run a name first.");
-      setIsRequesting(false);
-      return;
-    }
+  const openPreview = useCallback(async () => {
     if (
       !navigator.mediaDevices?.getUserMedia ||
       typeof MediaRecorder === "undefined"
@@ -1046,27 +927,74 @@ export default function App() {
     }
     setIsRequesting(true);
     setStatus("");
-    setSpeechStatus("");
-    setElapsed(0);
-    updateTranscript("");
-    let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 },
+        },
         audio: true,
       });
-    } catch {
-      setStatus(
-        "Camera and microphone access is needed to record. Check browser permissions and try again.",
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      stream.getVideoTracks()[0]?.addEventListener(
+        "ended",
+        () => {
+          setHasPreview(false);
+          setSetupConfirmed(false);
+        },
+        { once: true },
       );
+      setHasPreview(true);
+      setSetupConfirmed(false);
+    } catch {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setStatus(
+        "Camera and microphone access is needed. Check browser permissions and try again.",
+      );
+      setHasPreview(false);
+    } finally {
+      setIsRequesting(false);
+    }
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    if (!setupConfirmed) {
+      setStatus("Confirm your camera setup before starting a recording.");
+      return;
+    }
+    const currentProject = projects.find((project) => project.id === projectId);
+    if (!currentProject) {
+      setStatus("Choose or create a project first.");
       setIsRequesting(false);
       return;
     }
-    streamRef.current = stream;
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
-      void videoRef.current.play().catch(() => undefined);
+    if (!title.trim()) {
+      setStatus("Give this practice run a name first.");
+      setIsRequesting(false);
+      return;
     }
+    const stream = streamRef.current;
+    if (
+      !stream ||
+      stream.getVideoTracks().some((track) => track.readyState !== "live")
+    ) {
+      setSetupConfirmed(false);
+      setStatus(
+        "The camera disconnected. Reopen the preview and confirm your setup again.",
+      );
+      return;
+    }
+    setStatus("");
+    setSpeechStatus("");
+    setElapsed(0);
+    updateTranscript("");
     const chunks: BlobPart[] = [];
     let recorder: MediaRecorder;
     try {
@@ -1083,13 +1011,16 @@ export default function App() {
     } catch {
       stream.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
+      setHasPreview(false);
+      setSetupConfirmed(false);
       setStatus("Recording could not start on this device.");
       setIsRequesting(false);
       return;
     }
     recorderRef.current = recorder;
     const currentTitle = title.trim();
-    const currentCategory = category;
+    const currentCategory = currentProject.category;
+    const currentProjectId = currentProject.id;
     startedAtRef.current = Date.now();
     recordingRef.current = true;
     setIsRecording(true);
@@ -1128,6 +1059,7 @@ export default function App() {
         id,
         title: currentTitle,
         category: currentCategory,
+        projectId: currentProjectId,
         createdAt: new Date().toISOString(),
         durationSeconds,
         transcript: text,
@@ -1243,13 +1175,21 @@ export default function App() {
       setSpeechStatus(
         "Live transcription is unavailable. You can add a transcript after the run.",
       );
-  }, [category, commitSessions, openSession, title, updateTranscript]);
+  }, [
+    setupConfirmed,
+    projects,
+    projectId,
+    commitSessions,
+    openSession,
+    title,
+    updateTranscript,
+  ]);
 
   useEffect(() => {
     if (page !== "recording" || !captureRequestedRef.current) return;
     captureRequestedRef.current = false;
-    void startRecording();
-  }, [page, startRecording]);
+    void openPreview();
+  }, [page, openPreview]);
 
   function stopRecording() {
     if (!recordingRef.current) return;
@@ -1262,6 +1202,8 @@ export default function App() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
+    setHasPreview(false);
+    setSetupConfirmed(false);
   }
 
   function saveEditedTranscript() {
@@ -1421,6 +1363,35 @@ export default function App() {
     setStatus("Session deleted.");
   }
 
+  async function removeAllRecordings() {
+    if (
+      deletingRecordings ||
+      !window.confirm(
+        "Delete every saved video in this browser? Session notes and scores will remain.",
+      )
+    )
+      return;
+    setDeletingRecordings(true);
+    try {
+      await deleteAllRecordings();
+      const saved = commitSessions(
+        sessionsRef.current.map((session) => ({
+          ...session,
+          hasRecording: false,
+        })),
+      );
+      setRecordingUrl(null);
+      if (saved)
+        setStatus(
+          "All saved videos were deleted from this browser. Session notes and scores remain.",
+        );
+    } catch {
+      setStatus("Could not delete the saved videos. Please try again.");
+    } finally {
+      setDeletingRecordings(false);
+    }
+  }
+
   return (
     <div className="app-shell" inert={page === "recording"}>
       <aside className="sidebar">
@@ -1429,15 +1400,7 @@ export default function App() {
           onClick={() => navigate("overview")}
           aria-label="PrepTalk home"
         >
-          <span className="brand-mark">
-            <span />
-            <span />
-            <span />
-          </span>
-          <span>
-            prep<span className="brand-accent">talk</span>
-            <small>your practice space</small>
-          </span>
+          <img className="brand-image" src={logoSrc} alt="" />
         </button>
         <div className="nav-heading">WORKSPACE</div>
         <nav aria-label="Main navigation">
@@ -1488,12 +1451,7 @@ export default function App() {
       <main className="main-content">
         <header className="topbar">
           <div className="mobile-brand">
-            <span className="brand-mark">
-              <span />
-              <span />
-              <span />
-            </span>
-            preptalk
+            <img className="brand-image" src={logoSrc} alt="preppt." />
           </div>
           <div className="breadcrumb">
             Workspace <Icon name="chevron" size={14} />{" "}
@@ -1657,6 +1615,24 @@ export default function App() {
                   </small>
                 </div>
               </section>
+              {projects.length > 0 && (
+                <section className="projects-section">
+                  <div className="panel-header">
+                    <div>
+                      <span className="section-eyebrow">YOUR PROJECTS</span>
+                      <h3>Keep improving, one project at a time</h3>
+                    </div>
+                  </div>
+                  <ProjectCards
+                    projects={projects}
+                    sessions={sessions}
+                    onSelect={(id) => {
+                      setHistoryProjectId(id);
+                      navigate("history");
+                    }}
+                  />
+                </section>
+              )}
               <div className="dashboard-grid">
                 <section className="panel progress-panel">
                   <div className="panel-header">
@@ -1754,6 +1730,84 @@ export default function App() {
                         <h3>What are you practicing?</h3>
                       </div>
                     </div>
+                    <label className="field-label" htmlFor="project-select">
+                      Project
+                    </label>
+                    <div className="project-select-row">
+                      <select
+                        id="project-select"
+                        className="text-input"
+                        value={selectedProject?.id ?? ""}
+                        onChange={(event) => {
+                          setProjectId(event.target.value);
+                          setCreatingProject(false);
+                        }}
+                        disabled={isRecording || isSaving}
+                      >
+                        {!projects.length && (
+                          <option value="">Create your first project</option>
+                        )}
+                        {projects.map((project) => (
+                          <option value={project.id} key={project.id}>
+                            {project.name} · {project.category}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="button button-outline"
+                        type="button"
+                        onClick={() => setCreatingProject((value) => !value)}
+                        disabled={isRecording || isSaving}
+                      >
+                        <Icon name="plus" size={16} /> New project
+                      </button>
+                    </div>
+                    {creatingProject && (
+                      <div className="new-project-form">
+                        <label
+                          className="field-label"
+                          htmlFor="new-project-name"
+                        >
+                          Project name
+                        </label>
+                        <input
+                          id="new-project-name"
+                          className="text-input"
+                          type="text"
+                          maxLength={80}
+                          placeholder="e.g. Summer internship interview"
+                          value={newProjectName}
+                          onChange={(event) =>
+                            setNewProjectName(event.target.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") createProject();
+                          }}
+                        />
+                        <div className="field-label category-label">
+                          Practice type
+                        </div>
+                        <div className="category-options">
+                          {categories.map((item) => (
+                            <button
+                              key={item}
+                              type="button"
+                              className={`category-chip ${category === item ? "selected" : ""}`}
+                              onClick={() => setCategory(item)}
+                            >
+                              {item}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          className="button button-primary"
+                          type="button"
+                          onClick={createProject}
+                        >
+                          Create project
+                        </button>
+                      </div>
+                    )}
                     <label className="field-label" htmlFor="session-title">
                       Session name
                     </label>
@@ -1772,7 +1826,7 @@ export default function App() {
                       {[
                         ...new Set(
                           sessions
-                            .filter((item) => item.category === category)
+                            .filter((item) => projectIdFor(item) === projectId)
                             .map((item) => item.title),
                         ),
                       ].map((item) => (
@@ -1780,24 +1834,14 @@ export default function App() {
                       ))}
                     </datalist>
                     <p className="helper-copy">
-                      Use the same name and practice type on later attempts to
-                      compare progress.
+                      Each run in this project contributes to its progress over
+                      time.
                     </p>
-                    <div className="field-label category-label">
-                      Practice type
-                    </div>
-                    <div className="category-options">
-                      {categories.map((item) => (
-                        <button
-                          key={item}
-                          className={`category-chip ${category === item ? "selected" : ""}`}
-                          onClick={() => setCategory(item)}
-                          disabled={isRecording || isSaving}
-                        >
-                          {item}
-                        </button>
-                      ))}
-                    </div>
+                    {selectedProject && (
+                      <p className="project-type">
+                        Practice type: {selectedProject.category}
+                      </p>
+                    )}
                   </section>
                   <section className="panel recording-panel">
                     <div className="panel-header">
@@ -1831,7 +1875,7 @@ export default function App() {
                         className="button button-primary"
                         onClick={enterRecording}
                       >
-                        <Icon name="video" size={18} /> Start recording
+                        <Icon name="camera" size={18} /> Open camera setup
                       </button>
                     </div>
                   </section>
@@ -1964,8 +2008,8 @@ export default function App() {
                         {title || "Your practice run"}
                       </h2>
                       <p id="recording-popout-description">
-                        Keep your head and upper chest visible in the camera
-                        frame.
+                        Check your lighting and framing, then start the
+                        recording when you are ready.
                       </p>
                     </div>
                     <button
@@ -2006,13 +2050,15 @@ export default function App() {
                               ? "Waiting for permission"
                               : isSaving
                                 ? "Processing"
-                                : "Camera is off"}
+                                : hasPreview
+                                  ? "Camera preview"
+                                  : "Camera is off"}
                         </span>
                         <span className="framing-label">FRAMING GUIDE</span>
                       </div>
                       <div className="camera-stage popout-camera-stage">
                         <video ref={videoRef} autoPlay muted playsInline />
-                        {isRecording && (
+                        {hasPreview && (
                           <>
                             <div
                               className="chest-framing-guide"
@@ -2020,12 +2066,14 @@ export default function App() {
                             >
                               <span>HEAD + UPPER CHEST</span>
                             </div>
-                            <span className="camera-timer">
-                              <span /> REC {formatDuration(elapsed)}
-                            </span>
+                            {isRecording && (
+                              <span className="camera-timer">
+                                <span /> REC {formatDuration(elapsed)}
+                              </span>
+                            )}
                           </>
                         )}
-                        {!isRecording && (
+                        {!hasPreview && (
                           <div className="camera-placeholder">
                             <span className="camera-placeholder-icon">
                               <Icon name="camera" size={31} />
@@ -2042,17 +2090,33 @@ export default function App() {
                                 ? "Your browser will ask for camera and microphone permission."
                                 : isSaving
                                   ? "ElevenLabs, Gemini, and Presage are preparing your results."
-                                  : "Use the button below to try again."}
+                                  : "Use the button below to open the preview."}
                             </span>
                           </div>
                         )}
                       </div>
+                      {hasPreview && !isRecording && !isSaving && (
+                        <label className="camera-confirmation">
+                          <input
+                            type="checkbox"
+                            checked={setupConfirmed}
+                            onChange={(event) =>
+                              setSetupConfirmed(event.target.checked)
+                            }
+                          />
+                          <span>
+                            My face and upper chest are visible, and the
+                            lighting is even.
+                          </span>
+                        </label>
+                      )}
                       <div className="recording-popout-footer">
                         <div className="framing-instruction">
                           <Icon name="camera" size={18} />
                           <span>
-                            Position your head and upper chest inside the guide.
-                            This is a visual aid, not a body measurement.
+                            {isRecording
+                              ? "Keep your head and upper chest in frame."
+                              : "Use the preview to check your setup before recording."}
                           </span>
                         </div>
                         {isRecording ? (
@@ -2062,18 +2126,26 @@ export default function App() {
                           >
                             <Icon name="stop" size={17} /> Finish recording
                           </button>
-                        ) : (
+                        ) : !hasPreview ? (
                           <button
                             className="button button-primary"
-                            onClick={() => void startRecording()}
+                            onClick={() => void openPreview()}
                             disabled={isRequesting || isSaving}
                           >
-                            <Icon name="video" size={18} />
+                            <Icon name="camera" size={18} />
                             {isRequesting
                               ? "Waiting…"
                               : isSaving
                                 ? "Processing…"
-                                : "Try camera & mic"}
+                                : "Open camera preview"}
+                          </button>
+                        ) : (
+                          <button
+                            className="button button-primary"
+                            onClick={() => void startRecording()}
+                            disabled={!setupConfirmed || isSaving}
+                          >
+                            <Icon name="video" size={18} /> Start recording
                           </button>
                         )}
                       </div>
@@ -2134,12 +2206,24 @@ export default function App() {
                       : "Every attempt is part of your progress."}
                   </p>
                 </div>
-                <button
-                  className="button button-primary"
-                  onClick={() => navigate("practice")}
-                >
-                  <Icon name="plus" size={18} /> New session
-                </button>
+                <div className="history-heading-actions">
+                  <button
+                    className="button button-outline"
+                    onClick={() => void removeAllRecordings()}
+                    disabled={deletingRecordings}
+                  >
+                    <Icon name="trash" size={17} />{" "}
+                    {deletingRecordings
+                      ? "Deleting videos…"
+                      : "Delete all videos"}
+                  </button>
+                  <button
+                    className="button button-primary"
+                    onClick={() => navigate("practice")}
+                  >
+                    <Icon name="plus" size={18} /> New session
+                  </button>
+                </div>
               </div>
               {selected ? (
                 <div className="review-layout">
@@ -2252,7 +2336,15 @@ export default function App() {
                     </section>
                   </div>
                   <aside className="review-side">
-                    <PracticeProgress session={selected} sessions={sessions} />
+                    <PracticeProgress
+                      session={selected}
+                      sessions={sessions}
+                      projectName={
+                        projects.find(
+                          (project) => project.id === projectIdFor(selected),
+                        )?.name ?? selected.title
+                      }
+                    />
                     <section className="panel insights-panel">
                       <div className="panel-header">
                         <div>
@@ -2333,47 +2425,82 @@ export default function App() {
                   </aside>
                 </div>
               ) : (
-                <section className="panel library-panel">
-                  <div className="panel-header">
-                    <div>
-                      <span className="section-eyebrow">ALL YOUR RUNS</span>
-                      <h3>
-                        Practice sessions{" "}
-                        <span className="count-soft">{sessions.length}</span>
-                      </h3>
-                    </div>
-                  </div>
-                  {sessions.length ? (
-                    <div className="library-list">
-                      {sessions.map((session) => (
-                        <SessionRow
-                          key={session.id}
-                          session={session}
-                          onOpen={() => openSession(session.id)}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="library-empty">
-                      <span className="library-empty-icon">
-                        <Icon name="video" size={30} />
-                      </span>
-                      <h3>Your story starts with one run</h3>
-                      <p>
-                        Record your first presentation or interview practice to
-                        start building your library.
-                      </p>
+                <>
+                  <section className="projects-section">
+                    <div className="panel-header">
+                      <div>
+                        <span className="section-eyebrow">YOUR PROJECTS</span>
+                        <h3>Choose a project to see your progress</h3>
+                      </div>
                       <button
-                        className="button button-primary"
-                        onClick={() => navigate("practice")}
+                        className="text-link"
+                        onClick={() => {
+                          setCreatingProject(true);
+                          navigate("practice");
+                        }}
                       >
-                        Start practicing <Icon name="arrow" size={17} />
+                        New project <Icon name="plus" size={16} />
                       </button>
                     </div>
-                  )}
-                </section>
+                    <ProjectCards
+                      projects={projects}
+                      sessions={sessions}
+                      activeId={activeHistoryProject?.id}
+                      onSelect={setHistoryProjectId}
+                    />
+                  </section>
+                  <section className="panel library-panel">
+                    <div className="panel-header">
+                      <div>
+                        <span className="section-eyebrow">
+                          {activeHistoryProject?.name.toUpperCase() ??
+                            "YOUR RUNS"}
+                        </span>
+                        <h3>
+                          Practice sessions{" "}
+                          <span className="count-soft">
+                            {projectSessions.length}
+                          </span>
+                        </h3>
+                      </div>
+                    </div>
+                    {projectSessions.length ? (
+                      <div className="library-list">
+                        {projectSessions.map((session) => (
+                          <SessionRow
+                            key={session.id}
+                            session={session}
+                            onOpen={() => openSession(session.id)}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="library-empty">
+                        <span className="library-empty-icon">
+                          <Icon name="video" size={30} />
+                        </span>
+                        <h3>Your story starts with one run</h3>
+                        <p>
+                          Record your first presentation or interview practice
+                          to start building your library.
+                        </p>
+                        <button
+                          className="button button-primary"
+                          onClick={() => navigate("practice")}
+                        >
+                          Start practicing <Icon name="arrow" size={17} />
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                </>
               )}
-              <HistoryProgressCharts />
+              {activeHistoryProject && (
+                <HistoryProgressCharts
+                  sessions={projectSessions}
+                  projectName={activeHistoryProject.name}
+                />
+              )}
             </>
           )}
         </div>

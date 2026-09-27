@@ -61,6 +61,7 @@ const fake = vi.hoisted(() => {
       this.stopped = true;
       // Draining delivers the metrics for the frames pushed so far.
       this.emit("metrics", Buffer.alloc(0), 0);
+      this.emit("validationStatus", 0, 0, "");
     }
     async destroy() {
       this.destroyed = true;
@@ -166,6 +167,8 @@ describe("analyzeVideo", () => {
     );
     expect(sdk.stopped).toBe(true);
     expect(sdk.destroyed).toBe(true);
+    expect(result.durationSeconds).toBe(1);
+    expect(result.validation).toEqual([{ timeSeconds: 0, code: 0, hint: "" }]);
     expect(result.heartRate).toEqual([
       { timeSeconds: 12, value: 72.3, confidence: 92, stable: true },
     ]);
