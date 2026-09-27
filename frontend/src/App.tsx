@@ -17,6 +17,7 @@ import type { PracticeCategory, PracticeSession } from "./types/interview";
 import { extractMetrics, formatDuration } from "./utils/videoMetrics";
 import { confidenceFor, samePractice } from "./utils/confidence";
 import { breathingNote, dominantExpression } from "./utils/bodySignals";
+import type { AuthUiState } from "./auth/Auth0Gate";
 
 type Page = "overview" | "practice" | "recording" | "history";
 const pagePath: Record<Exclude<Page, "recording">, string> = {
@@ -829,7 +830,7 @@ function VitalSummary({
   );
 }
 
-export default function App() {
+export default function App({ auth }: { auth?: AuthUiState }) {
   const [page, setPage] = useState<Page>(() =>
     pageFromPath(window.location.pathname),
   );
@@ -1475,10 +1476,14 @@ export default function App() {
             <p>Build confidence one run at a time.</p>
           </div>
           <div className="local-profile">
-            <span className="avatar">Y</span>
+            <span className="avatar">
+              {auth ? auth.displayName.charAt(0).toUpperCase() : "Y"}
+            </span>
             <span>
-              <strong>Your workspace</strong>
-              <small>Saved on this device</small>
+              <strong>{auth?.displayName ?? "Your workspace"}</strong>
+              <small>
+                {auth ? "Signed in with Auth0" : "Saved on this device"}
+              </small>
             </span>
             <span className="profile-dot" />
           </div>
@@ -1519,7 +1524,34 @@ export default function App() {
             <span className="local-badge">
               <span /> Local workspace
             </span>
-            <span className="avatar top-avatar">Y</span>
+            {auth ? (
+              <div className="auth-controls">
+                {auth.picture ? (
+                  <img
+                    className="avatar top-avatar"
+                    src={auth.picture}
+                    alt=""
+                  />
+                ) : (
+                  <span className="avatar top-avatar">
+                    {auth.displayName.charAt(0).toUpperCase()}
+                  </span>
+                )}
+                <span className="auth-account" title={auth.email}>
+                  <strong>{auth.displayName}</strong>
+                  <small>Signed in</small>
+                </span>
+                <button
+                  className="auth-signout"
+                  type="button"
+                  onClick={auth.logout}
+                >
+                  Sign out
+                </button>
+              </div>
+            ) : (
+              <span className="avatar top-avatar">Y</span>
+            )}
           </div>
         </header>
         <div className="page-content">

@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@auth0/auth0-react": "^2.27.0",
     "@nivo/core": "^0.99.0",
     "@nivo/line": "^0.99.0",
     "react": "^19.0.0",

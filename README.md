@@ -19,6 +19,21 @@ To save Presage body signals to Tiger Data, set `DATABASE_URL` in `.env` to your
 npm run db:migrate
 ```
 
+### Optional Auth0 sign-in
+
+The SDK is installed as `@auth0/auth0-react` and initialized in `frontend/src/main.tsx`. The root `.env.example` contains this SPA's public settings; copy it to `.env` (or add the same values to your existing root `.env`):
+
+```dotenv
+VITE_AUTH0_DOMAIN=dev-wijcepqixl75fe1o.us.auth0.com
+VITE_AUTH0_CLIENT_ID=IABg9tufn4oWH5EjyLUm3L36wKr6l9WE
+```
+
+These are public SPA identifiers, not secrets. In the Auth0 dashboard, open the application and set **Application Type** to **Single Page Application** and **Token Endpoint Authentication Method** to **None**. Add `http://localhost:5173` to each of **Allowed Callback URLs**, **Allowed Logout URLs**, and **Allowed Web Origins**. Add the exact HTTPS origin(s) used for development or deployment to all three settings as well. The callback and logout URLs must match the app origin exactly. Restart the dev server after changing `.env`; `npm run dev` pins Vite to port `5173` and fails if that port is occupied. In Vercel, define both variables in the project's Environment Variables and redeploy.
+
+The sign-in screen offers login and signup through the official SDK, and logout returns to the app origin. When either environment variable is missing, the app remains in local, unauthenticated mode.
+
+This is frontend authentication only. No backend code or API authorization is changed, so `/api/*` remains callable without a token and the UI gate can be bypassed. Do not treat this as protection for private data or deploy the API as access-controlled until the backend validates Auth0 access tokens. Sessions and videos remain in browser storage and are not partitioned by Auth0 account; anyone using the same browser profile can access them.
+
 At startup the backend logs whether it can save to Tiger Data.
 
 Choose **Practice studio**, name a run, and click **Start recording**. The app moves to `/practice/record` and opens a recording popout that uses 96% of the desktop viewport. Its large camera preview includes a visual guide for keeping your head and upper chest in frame; the guide does not detect body position. The browser requests camera and microphone permission, then starts recording after permission is granted. Click **Finish recording** to save the video and open its review. Transcription and Presage analysis run independently in the background. If either fails, the video is still saved locally; retry each step from the review. Browser speech recognition supplies a live preview where supported. Editing a transcript clears its old Gemini result so it can be analyzed again. Use the same practice name and type on later runs to compare attempts. The red, yellow, and green progress bar compares the current practice estimate with the previous attempt. Use the top bar to switch between light and dark blue themes.
@@ -37,7 +52,7 @@ Open `https://<DEV_HOST>` from another machine. Caddy serves the frontend and AP
 docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt ./preptalk-root.crt
 ```
 
-Trust `preptalk-root.crt` using each client's operating system or browser certificate settings. Keep this server on a trusted network while developing: the current app has no account login or access control for the transcription endpoint. Docker also starts a TimescaleDB container. The backend saves Presage body signals to it; create the table once with `docker compose exec app npm run db:migrate`. Sessions and videos are not written to it. `docker compose down` stops the containers while retaining the database volume.
+Trust `preptalk-root.crt` using each client's operating system or browser certificate settings. Keep this server on a trusted network while developing: Auth0 sign-in only gates the frontend, and the transcription endpoint and other API routes have no access control. Docker also starts a TimescaleDB container. The backend saves Presage body signals to it; create the table once with `docker compose exec app npm run db:migrate`. Sessions and videos are not written to it. `docker compose down` stops the containers while retaining the database volume.
 
 The host's direct `http://<LAN-IP>:5173` URL cannot request camera access in most browsers because camera access requires a secure context. Use the HTTPS URL above, or `http://localhost:5173` when working on the host itself.
 
@@ -94,7 +109,7 @@ Breathing is the hardest signal to get. Presage measures it from chest movement,
 
 The dominant facial expression is the one Presage scored highest (of angry, contempt, disgust, fear, happy, neutral, sad, and surprise) for the most seconds of stable face data, shown with its share of the run and the next two. Like the camera-facing estimate, it describes the face, not what the speaker feels. Runs analyzed before this was added show it after **Reanalyze with Presage**.
 
-The 0–100 overall confidence estimate combines available filler frequency, speaking pace, camera-facing time, and stable heart and breathing steadiness. Missing factors are omitted and the remaining weights are scaled. Red is below 50, yellow is 50–74, and green is 75 or above. It is a rehearsal aid, not a measure of a person's internal confidence. User login, saving sessions and videos to Tiger Data, and broader Gemini coaching are still future work.
+The 0–100 overall confidence estimate combines available filler frequency, speaking pace, camera-facing time, and stable heart and breathing steadiness. Missing factors are omitted and the remaining weights are scaled. Red is below 50, yellow is 50–74, and green is 75 or above. It is a rehearsal aid, not a measure of a person's internal confidence. Account-based data isolation, saving sessions and videos to Tiger Data, and broader Gemini coaching are still future work.
 
 ## Tiger Data
 
