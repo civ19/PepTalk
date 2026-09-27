@@ -7,6 +7,7 @@ import { loadRootEnv } from "./env";
 import { createPool, databaseUrlFromEnv } from "./modules/persistence/database";
 import { VitalSamplesRepository } from "./modules/persistence/vitalSamplesRepository";
 import { CoachingFeedbackRepository } from "./modules/persistence/coachingFeedbackRepository";
+import { AccountRepository } from "./modules/persistence/accountRepository";
 
 export function appFromEnv() {
   loadRootEnv();
@@ -14,5 +15,9 @@ export function appFromEnv() {
   const pool = databaseUrl ? createPool(databaseUrl) : null;
   const vitalSamples = pool ? new VitalSamplesRepository(pool) : null;
   const coachingFeedback = pool ? new CoachingFeedbackRepository(pool) : null;
-  return { app: createApp({ vitalSamples, coachingFeedback }), vitalSamples };
+  const accounts = pool ? new AccountRepository(pool) : null;
+  return {
+    app: createApp({ vitalSamples, coachingFeedback, accounts }),
+    vitalSamples,
+  };
 }

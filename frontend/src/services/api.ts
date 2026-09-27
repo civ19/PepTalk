@@ -16,10 +16,11 @@ const DB_NAME = "preptalk-recordings";
 const STORE_NAME = "recordings";
 const FILE_STORE = "project-files";
 
-export function getSessions(): PracticeSession[] {
+export function getSessions(owner?: string): PracticeSession[] {
   try {
     const parsed: unknown = JSON.parse(
-      localStorage.getItem(SESSION_KEY) ?? "[]",
+      localStorage.getItem(owner ? `${SESSION_KEY}.${owner}` : SESSION_KEY) ??
+        "[]",
     );
     return Array.isArray(parsed) ? (parsed as PracticeSession[]) : [];
   } catch {
@@ -27,14 +28,21 @@ export function getSessions(): PracticeSession[] {
   }
 }
 
-export function saveSessions(sessions: PracticeSession[]): void {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(sessions));
+export function saveSessions(
+  sessions: PracticeSession[],
+  owner?: string,
+): void {
+  localStorage.setItem(
+    owner ? `${SESSION_KEY}.${owner}` : SESSION_KEY,
+    JSON.stringify(sessions),
+  );
 }
 
-export function getSavedProjects(): PracticeProject[] {
+export function getSavedProjects(owner?: string): PracticeProject[] {
   try {
     const parsed: unknown = JSON.parse(
-      localStorage.getItem(PROJECT_KEY) ?? "[]",
+      localStorage.getItem(owner ? `${PROJECT_KEY}.${owner}` : PROJECT_KEY) ??
+        "[]",
     );
     return Array.isArray(parsed) ? (parsed as PracticeProject[]) : [];
   } catch {
@@ -42,8 +50,14 @@ export function getSavedProjects(): PracticeProject[] {
   }
 }
 
-export function saveProjects(projects: PracticeProject[]): void {
-  localStorage.setItem(PROJECT_KEY, JSON.stringify(projects));
+export function saveProjects(
+  projects: PracticeProject[],
+  owner?: string,
+): void {
+  localStorage.setItem(
+    owner ? `${PROJECT_KEY}.${owner}` : PROJECT_KEY,
+    JSON.stringify(projects),
+  );
 }
 
 function openRecordingDb(): Promise<IDBDatabase> {

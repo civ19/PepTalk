@@ -14,6 +14,8 @@ export default defineConfig({
       "backend/test/expressions.test.ts",
       "backend/test/coachingService.test.ts",
       "backend/test/coachingFeedbackRepository.test.ts",
+      "backend/test/accountRepository.test.ts",
+      "backend/test/accountRoutes.test.ts",
       "backend/test/coachingRoutes.test.ts",
       "backend/test/transcriptionService.test.ts",
     ],

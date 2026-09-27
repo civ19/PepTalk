@@ -27,10 +27,19 @@ import type {
   TimedWord,
 } from "./types/interview";
 import { extractMetrics, formatDuration } from "./utils/videoMetrics";
-import { confidenceFor, samePractice } from "./utils/confidence";
+import { confidenceFor } from "./utils/confidence";
 import { breathingNote, dominantExpression } from "./utils/bodySignals";
 import { projectIdFor, projectsFor, sessionsInProject } from "./utils/projects";
 import { trendFor } from "./utils/trends";
+import { progressForAttempt } from "./utils/progress";
+import { useAccountAuth } from "./auth/context";
+import {
+  deleteAccountPreparation,
+  loadAccount,
+  saveAccountPreparation,
+  saveAccountProfile,
+  saveAccountProject,
+} from "./services/account";
 
 type Page = "overview" | "practice" | "recording" | "history";
 const pagePath: Record<Exclude<Page, "recording">, string> = {
@@ -387,17 +396,15 @@ function PracticeProgress({
   sessions: PracticeSession[];
   projectName: string;
 }) {
-  const attempts = sessions
-    .filter((item) => samePractice(item, session))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const currentIndex = attempts.findIndex((item) => item.id === session.id);
-  const previous = currentIndex > 0 ? attempts[currentIndex - 1] : null;
-  const currentScore = confidenceFor(session);
-  const previousScore = previous ? confidenceFor(previous).score : null;
-  const delta =
-    currentScore.score !== null && previousScore !== null
-      ? currentScore.score - previousScore
-      : null;
+  const {
+    attempts,
+    currentIndex,
+    previousScores,
+    previousAttempts,
+    score: currentScore,
+    delta,
+    comparisonAttempt,
+  } = progressForAttempt(session, sessions);
   return (
     <section className="panel progress-panel">
       <span className="section-eyebrow">THIS PRACTICE</span>
@@ -420,7 +427,7 @@ function PracticeProgress({
         aria-label={
           currentScore.score === null
             ? "No score yet"
-            : `Confidence estimate ${currentScore.score} out of 100, ${currentScore.stage} stage`
+            : `Confidence estimate ${currentScore.score} out of 100, ${currentScore.stage} stage. Earlier scores: ${previousAttempts.map((item) => `attempt ${item.attempt}, ${item.score ?? "no score"}`).join("; ") || "none"}`
         }
       >
         <span className="scale-red" />
@@ -433,13 +440,14 @@ function PracticeProgress({
             title={`This attempt: ${currentScore.score}`}
           />
         )}
-        {previousScore !== null && (
+        {previousScores.map((item) => (
           <i
+            key={item.id}
             className="scale-marker previous"
-            style={{ left: `${previousScore}%` }}
-            title={`Previous attempt: ${previousScore}`}
+            style={{ left: `${item.score}%` }}
+            title={`Attempt ${item.attempt}: ${item.score} / 100`}
           />
-        )}
+        ))}
       </div>
       <div className="scale-labels">
         <span>Build</span>
@@ -449,9 +457,21 @@ function PracticeProgress({
       <p className="progress-comparison">
         Attempt {currentIndex + 1} of {attempts.length} in “{projectName}”
         {delta !== null
-          ? ` · ${delta > 0 ? "+" : ""}${delta} points vs previous attempt`
+          ? ` · ${delta > 0 ? "+" : ""}${delta} points vs attempt ${comparisonAttempt}`
           : " · First scored attempt"}
       </p>
+      {previousAttempts.length > 0 && (
+        <ol className="previous-score-list" aria-label="All earlier attempts">
+          {previousAttempts.map((item) => (
+            <li key={item.id}>
+              Attempt {item.attempt}:{" "}
+              <strong>
+                {item.score === null ? "No score" : `${item.score} / 100`}
+              </strong>
+            </li>
+          ))}
+        </ol>
+      )}
       {attempts.length > 1 && (
         <div
           className="attempt-history"
@@ -642,6 +662,7 @@ function VitalSummary({
 }
 
 export default function App() {
+  const auth = useAccountAuth();
   const [page, setPage] = useState<Page>(() =>
     pageFromPath(window.location.pathname),
   );
@@ -682,11 +703,20 @@ export default function App() {
         : "light";
   });
   const logoSrc =
+    theme === "dark" ? "/new-logo-dark-mode.png" : "/new-logo-light-mode.png";
+  const faviconSrc =
     theme === "dark" ? "/dark-mode-icon.png" : "/light-mode-icon.png";
   const [elapsed, setElapsed] = useState(0);
   const [transcript, setTranscript] = useState("");
   const [draftTranscript, setDraftTranscript] = useState("");
   const [status, setStatus] = useState("");
+  const [accountLoading, setAccountLoading] = useState(auth.loading);
+  const ownerRef = useRef<string | null>(null);
+  const tokenRef = useRef(auth.getToken);
+  tokenRef.current = auth.getToken;
+  const syncQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingWritesRef = useRef(new Map<string, number>());
+  const failedWritesRef = useRef(new Set<string>());
   const [speechStatus, setSpeechStatus] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const playbackRef = useRef<HTMLVideoElement>(null);
@@ -723,19 +753,155 @@ export default function App() {
     [transcript, elapsed],
   );
 
-  const commitSessions = useCallback((next: PracticeSession[]) => {
-    sessionsRef.current = next;
-    setSessions(next);
-    try {
-      saveSessions(next);
-      return true;
-    } catch {
-      setStatus(
-        "Session details could not be saved in this browser. Check available storage.",
+  const queueAccountWrite = useCallback(
+    (owner: string, write: (token: string) => Promise<void>) => {
+      const dirtyKey = `preptalk.syncDirty.${owner}`;
+      localStorage.setItem(dirtyKey, "true");
+      pendingWritesRef.current.set(
+        owner,
+        (pendingWritesRef.current.get(owner) ?? 0) + 1,
       );
-      return false;
+      syncQueueRef.current = syncQueueRef.current
+        .then(async () => {
+          if (ownerRef.current !== owner) {
+            failedWritesRef.current.add(owner);
+            return;
+          }
+          const token = await tokenRef.current();
+          if (ownerRef.current !== owner) {
+            failedWritesRef.current.add(owner);
+            return;
+          }
+          await write(token);
+        })
+        .catch((error: unknown) => {
+          failedWritesRef.current.add(owner);
+          setStatus(
+            error instanceof Error
+              ? `Account sync: ${error.message}`
+              : "Account sync failed.",
+          );
+        })
+        .finally(() => {
+          const remaining = (pendingWritesRef.current.get(owner) ?? 1) - 1;
+          pendingWritesRef.current.set(owner, remaining);
+          if (remaining === 0 && !failedWritesRef.current.has(owner))
+            localStorage.removeItem(dirtyKey);
+        });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (auth.loading) return;
+    const owner = auth.subject;
+    ownerRef.current = owner;
+    setSelectedId(null);
+    setRecordingUrl(null);
+    setSessions(getSessions(owner ?? undefined));
+    sessionsRef.current = getSessions(owner ?? undefined);
+    setSavedProjects(getSavedProjects(owner ?? undefined));
+    if (!owner) {
+      setAccountLoading(false);
+      return;
     }
-  }, []);
+    let cancelled = false;
+    setAccountLoading(true);
+    void (async () => {
+      await syncQueueRef.current;
+      const token = await tokenRef.current();
+      await saveAccountProfile(token, {
+        name: auth.name,
+        email: auth.email,
+        picture: auth.picture,
+      });
+      let remote = await loadAccount(token);
+      if (localStorage.getItem(`preptalk.syncDirty.${owner}`) === "true") {
+        const cachedSessions = getSessions(owner);
+        const cachedProjects = getSavedProjects(owner);
+        for (const project of projectsFor(cachedSessions, cachedProjects))
+          await saveAccountProject(token, project);
+        for (const item of cachedSessions)
+          await saveAccountPreparation(token, {
+            ...item,
+            projectId: projectIdFor(item),
+          });
+        const cachedIds = new Set(cachedSessions.map((item) => item.id));
+        for (const item of remote.preparations)
+          if (!cachedIds.has(item.id))
+            await deleteAccountPreparation(token, item.id);
+        localStorage.removeItem(`preptalk.syncDirty.${owner}`);
+        failedWritesRef.current.delete(owner);
+        remote = await loadAccount(token);
+      }
+      if (cancelled || ownerRef.current !== owner) return;
+      const remoteSessions = await Promise.all(
+        remote.preparations.map(async (item) => ({
+          ...item,
+          hasRecording:
+            item.hasRecording &&
+            !!(await getRecording(item.id).catch(() => undefined)),
+        })),
+      );
+      sessionsRef.current = remoteSessions;
+      setSessions(remoteSessions);
+      setSavedProjects(remote.projects);
+      saveSessions(remoteSessions, owner);
+      saveProjects(remote.projects, owner);
+    })()
+      .catch((error: unknown) => {
+        if (!cancelled)
+          setStatus(
+            error instanceof Error
+              ? `Account data: ${error.message}`
+              : "Account data unavailable.",
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setAccountLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.loading, auth.subject, auth.name, auth.email, auth.picture]);
+
+  const commitSessions = useCallback(
+    (next: PracticeSession[]) => {
+      const previous = sessionsRef.current;
+      const owner = ownerRef.current;
+      sessionsRef.current = next;
+      setSessions(next);
+      try {
+        saveSessions(next, owner ?? undefined);
+        if (owner) {
+          const earlier = new Map(previous.map((item) => [item.id, item]));
+          for (const item of next)
+            if (item !== earlier.get(item.id)) {
+              queueAccountWrite(owner, (token) =>
+                saveAccountPreparation(token, {
+                  ...item,
+                  projectId: projectIdFor(item),
+                }),
+              );
+            }
+          const remaining = new Set(next.map((item) => item.id));
+          for (const item of previous)
+            if (!remaining.has(item.id)) {
+              queueAccountWrite(owner, (token) =>
+                deleteAccountPreparation(token, item.id),
+              );
+            }
+        }
+        return true;
+      } catch {
+        setStatus(
+          "Session details could not be saved in this browser. Check available storage.",
+        );
+        return false;
+      }
+    },
+    [queueAccountWrite],
+  );
 
   function updateProject(project: PracticeProject) {
     const next = [
@@ -743,8 +909,11 @@ export default function App() {
       ...savedProjects.filter((item) => item.id !== project.id),
     ];
     try {
-      saveProjects(next);
+      const owner = ownerRef.current;
+      saveProjects(next, owner ?? undefined);
       setSavedProjects(next);
+      if (owner)
+        queueAccountWrite(owner, (token) => saveAccountProject(token, project));
       return true;
     } catch {
       setStatus("Project details could not be saved in this browser.");
@@ -880,7 +1049,7 @@ export default function App() {
     };
     const next = [project, ...savedProjects];
     try {
-      saveProjects(next);
+      saveProjects(next, ownerRef.current ?? undefined);
     } catch {
       setStatus(
         "The project could not be saved in this browser. Check available storage.",
@@ -888,6 +1057,9 @@ export default function App() {
       return;
     }
     setSavedProjects(next);
+    const owner = ownerRef.current;
+    if (owner)
+      queueAccountWrite(owner, (token) => saveAccountProject(token, project));
     setProjectId(project.id);
     setHistoryProjectId(project.id);
     setNewProjectName("");
@@ -900,9 +1072,11 @@ export default function App() {
     document
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute("content", theme === "dark" ? "#0c172b" : "#f4f8ff");
-    document.querySelector('link[rel="icon"]')?.setAttribute("href", logoSrc);
+    document
+      .querySelector('link[rel="icon"]')
+      ?.setAttribute("href", faviconSrc);
     localStorage.setItem("preptalk.theme", theme);
-  }, [theme, logoSrc]);
+  }, [theme, faviconSrc]);
 
   useEffect(() => {
     if (!isRecording) return;
@@ -1536,6 +1710,51 @@ export default function App() {
     }
   }
 
+  function importLocalProjects() {
+    const owner = ownerRef.current;
+    if (!owner) return;
+    const guestSessions = getSessions();
+    const guestProjects = projectsFor(guestSessions, getSavedProjects());
+    if (!guestProjects.length) {
+      setStatus("No guest projects to import.");
+      return;
+    }
+    queueAccountWrite(owner, async (token) => {
+      const existingProjects = new Set(
+        projectsFor(sessionsRef.current, savedProjects).map((item) => item.id),
+      );
+      const existingSessions = new Set(
+        sessionsRef.current.map((item) => item.id),
+      );
+      const addedProjects = guestProjects.filter(
+        (item) => !existingProjects.has(item.id),
+      );
+      const addedSessions = guestSessions
+        .filter((item) => !existingSessions.has(item.id))
+        .map((item) => ({ ...item, projectId: projectIdFor(item) }));
+      for (const project of addedProjects)
+        await saveAccountProject(token, project);
+      for (const session of addedSessions)
+        await saveAccountPreparation(token, session);
+      if (ownerRef.current !== owner) return;
+      const nextProjects = [...addedProjects, ...savedProjects];
+      const nextSessions = [...addedSessions, ...sessionsRef.current];
+      sessionsRef.current = nextSessions;
+      setSessions(nextSessions);
+      setSavedProjects(nextProjects);
+      saveSessions(nextSessions, owner);
+      saveProjects(nextProjects, owner);
+      setStatus(
+        `Imported ${addedProjects.length} projects and ${addedSessions.length} attempts.`,
+      );
+    });
+  }
+
+  async function signOut() {
+    await syncQueueRef.current;
+    auth.signOut();
+  }
+
   return (
     <div className="app-shell" inert={page === "recording"}>
       <aside className="sidebar">
@@ -1581,14 +1800,6 @@ export default function App() {
             <strong>A little practice goes a long way.</strong>
             <p>Build confidence one run at a time.</p>
           </div>
-          <div className="local-profile">
-            <span className="avatar">Y</span>
-            <span>
-              <strong>Your workspace</strong>
-              <small>Saved on this device</small>
-            </span>
-            <span className="profile-dot" />
-          </div>
         </div>
       </aside>
 
@@ -1618,13 +1829,105 @@ export default function App() {
             >
               {theme === "dark" ? "☀ Light" : "☾ Dark"}
             </button>
-            <span className="local-badge">
-              <span /> Local workspace
-            </span>
-            <span className="avatar top-avatar">Y</span>
+            <details className="header-menu">
+              <summary
+                className="profile-trigger"
+                aria-label="Profile and sign in options"
+              >
+                {auth.picture && auth.subject ? (
+                  <img
+                    className="avatar top-avatar"
+                    src={auth.picture}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <span className="avatar top-avatar">
+                    {auth.name?.charAt(0).toUpperCase() || "?"}
+                  </span>
+                )}
+                <span>
+                  {auth.subject
+                    ? auth.name || auth.email || "Profile"
+                    : "Sign in"}
+                </span>
+              </summary>
+              <div className="header-dropdown profile-dropdown">
+                {auth.subject ? (
+                  <>
+                    <strong>{auth.name || "Your profile"}</strong>
+                    {auth.email && <small>{auth.email}</small>}
+                    <button type="button" onClick={importLocalProjects}>
+                      Import guest projects
+                    </button>
+                    <button
+                      type="button"
+                      disabled={
+                        isRecording ||
+                        isSaving ||
+                        isTranscribing ||
+                        isAnalyzing ||
+                        isAnalyzingVitals ||
+                        isCoaching
+                      }
+                      onClick={() => void signOut()}
+                    >
+                      Sign out
+                    </button>
+                  </>
+                ) : auth.configured ? (
+                  <>
+                    <strong>Save progress to your account</strong>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void auth
+                          .signIn()
+                          .catch((error: unknown) =>
+                            setStatus(
+                              error instanceof Error
+                                ? error.message
+                                : "Sign in failed.",
+                            ),
+                          )
+                      }
+                    >
+                      Sign in
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void auth
+                          .signIn(true)
+                          .catch((error: unknown) =>
+                            setStatus(
+                              error instanceof Error
+                                ? error.message
+                                : "Google sign in failed.",
+                            ),
+                          )
+                      }
+                    >
+                      Continue with Google
+                    </button>
+                  </>
+                ) : (
+                  <small>Set up Auth0 to enable sign in.</small>
+                )}
+              </div>
+            </details>
           </div>
         </header>
-        <div className="page-content">
+        <div
+          className="page-content"
+          aria-busy={accountLoading}
+          inert={accountLoading}
+        >
+          {accountLoading && (
+            <div className="account-loading" role="status">
+              Loading your account…
+            </div>
+          )}
           {status && page !== "recording" && (
             <div className="status-banner" role="status">
               <span>{status}</span>

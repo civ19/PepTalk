@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@auth0/auth0-react": "^2.27.0",
     "@nivo/core": "^0.99.0",
     "@nivo/line": "^0.99.0",
     "react": "^19.0.0",

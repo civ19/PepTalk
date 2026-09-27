@@ -1,6 +1,6 @@
 # PrepTalk
 
-PrepTalk helps you rehearse a presentation, interview answer, or other speaking task. The React app records video in the browser, sends it to the Express backend for an ElevenLabs Scribe v2 transcript and Presage SmartSpectra body signals, then asks Gemini for filler analysis and attempt-specific coaching. Recordings, project references, and session details stay in the browser on the device used to record. When `DATABASE_URL` is set, the backend also saves each run's Presage body signals and every Gemini coaching response to Tiger Data.
+PrepTalk helps you rehearse a presentation, interview answer, or other speaking task. The React app records video in the browser, sends it to the Express backend for an ElevenLabs Scribe v2 transcript and Presage SmartSpectra body signals, then asks Gemini for filler analysis and attempt-specific coaching. Guest projects and attempts stay in the browser. Signed-in users can save their profile, projects, preparations, and analysis in Tiger Data. Videos and reference file contents stay in the browser. When `DATABASE_URL` is set, the backend also saves each run's Presage body signals and every Gemini coaching response to Tiger Data.
 
 ## Run locally
 
@@ -13,7 +13,7 @@ npm run dev
 
 If you do not already have a root `.env`, copy `.env.example` to `.env`. Add `ELEVENLABS_API_KEY`, `GEMINI_API_KEY`, and `SMARTSPECTRA_API_KEY` before starting the servers. Open `http://localhost:5173`. The backend listens on port 4000; Vite forwards `/api` requests to it. Keep the keys in the root `.env` file, which the backend loads at startup. Restart the backend after changing it. Keys are never needed in frontend environment variables. `GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`.
 
-To save Presage body signals and Gemini feedback to Tiger Data, set `DATABASE_URL` in `.env` to your Tiger service's connection string (Tiger Console > your service > Connect) and apply the migrations:
+To save account data, Presage body signals, and Gemini feedback to Tiger Data, set `DATABASE_URL` in `.env` to your Tiger service's connection string (Tiger Console > your service > Connect) and apply the migrations:
 
 ```sh
 npm run db:migrate
@@ -21,7 +21,13 @@ npm run db:migrate
 
 At startup the backend logs whether it can save to Tiger Data.
 
-Choose **Practice studio**, select a project, add context notes or up to five PDF/text references (8 MB total), name a run, and click **Open camera setup**. Export PowerPoint slides as PDF before attaching them. The app moves to `/practice/record` and opens a recording popout. It requests camera and microphone access for a live preview. Use the live preview to check your face, upper chest, and lighting. Tick the setup checkbox to enable **Start recording**, then click it when ready. This is a user check; Presage analyzes the completed run afterward. Click **Finish recording** to save the video and open its review. Transcription and Presage analysis run independently in the background, followed by Gemini coaching. If a step fails, the video is still saved locally; retry it from the review. Browser speech recognition supplies a live preview where supported. Editing a transcript clears its old filler analysis and timing; earlier coaching responses remain available. Keep later runs in the same project to compare attempts. The red, yellow, and green progress bar compares the current practice estimate with the previous attempt. Use the top bar to switch between light and dark blue themes.
+### Sign in with Auth0 or Google
+
+Create an Auth0 Single Page Application and an Auth0 API. Set `AUTH0_DOMAIN` to the tenant hostname and `AUTH0_AUDIENCE` to the API identifier on the backend. Set `VITE_AUTH0_DOMAIN` to the same hostname, `VITE_AUTH0_AUDIENCE` to the same API identifier, and `VITE_AUTH0_CLIENT_ID` to the SPA client ID. For local development, add `http://localhost:5173` to the SPA's **Allowed Callback URLs**, **Allowed Logout URLs**, and **Allowed Web Origins**. Add the deployed site origin as well when hosting. Enable Auth0's Google social connection for the SPA to use **Continue with Google**. Restart Vite and the backend after changing `.env`.
+
+The profile button in the header opens sign-in and sign-out actions. On first sign-in, use **Import guest projects** to copy existing browser projects and attempts into the account. Account rows follow `app_users` → `practice_projects` → `preparations`, keyed by the verified Auth0 subject. Auth0 validates access tokens on the account API. The light/dark button beside the profile switches the theme. Project reference files and videos remain on the device where they were added; reattach references on another device before requesting Gemini coaching there. The account API requires both Auth0 configuration and a migrated database.
+
+Choose **Practice studio**, select a project, add context notes or up to five PDF/text references (8 MB total), name a run, and click **Open camera setup**. Export PowerPoint slides as PDF before attaching them. The app moves to `/practice/record` and opens a recording popout. It requests camera and microphone access for a live preview. Use the live preview to check your face, upper chest, and lighting. Tick the setup checkbox to enable **Start recording**, then click it when ready. This is a user check; Presage analyzes the completed run afterward. Click **Finish recording** to save the video and open its review. Transcription and Presage analysis run independently in the background, followed by Gemini coaching. If a step fails, the video is still saved locally; retry it from the review. Browser speech recognition supplies a live preview where supported. Editing a transcript clears its old filler analysis and timing; earlier coaching responses remain available. Keep later runs in the same project to compare attempts. The red, yellow, and green progress bar shows every earlier scored attempt, and the list below it includes attempts without a score. Its point change compares with the latest earlier scored attempt. Use the light/dark button in the top bar to switch between themes.
 
 ## Run on another machine with Docker
 
@@ -37,7 +43,7 @@ Open `https://<DEV_HOST>` from another machine. Caddy serves the frontend and AP
 docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt ./preptalk-root.crt
 ```
 
-Trust `preptalk-root.crt` using each client's operating system or browser certificate settings. Keep this server on a trusted network while developing: the current app has no account login or access control for the transcription or coaching endpoints. Docker also starts a TimescaleDB container. The backend saves Presage body signals and Gemini coaching responses to it; create the tables once with `docker compose exec app npm run db:migrate`. Sessions, project files, and videos are not written to it. `docker compose down` stops the containers while retaining the database volume.
+Trust `preptalk-root.crt` using each client's operating system or browser certificate settings. Keep this server on a trusted network while developing: transcription and coaching endpoints are still available without login. Docker also starts a TimescaleDB container. The backend saves Presage body signals and Gemini coaching responses to it, plus signed-in profile, project, and preparation data when Auth0 is configured; create the tables once with `docker compose exec app npm run db:migrate`. Project file contents and videos are not written to it. `docker compose down` stops the containers while retaining the database volume.
 
 The host's direct `http://<LAN-IP>:5173` URL cannot request camera access in most browsers because camera access requires a secure context. Use the HTTPS URL above, or `http://localhost:5173` when working on the host itself.
 
