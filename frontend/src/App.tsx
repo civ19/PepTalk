@@ -1477,7 +1477,7 @@ export default function App({ auth }: { auth?: AuthUiState }) {
           </div>
           <div className="local-profile">
             <span className="avatar">
-              {auth ? auth.displayName.charAt(0).toUpperCase() : "Y"}
+              {auth ? auth?.displayName?.charAt(0)?.toUpperCase() : "Y"}
             </span>
             <span>
               <strong>{auth?.displayName ?? "Your workspace"}</strong>
