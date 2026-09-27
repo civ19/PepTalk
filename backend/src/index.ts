@@ -1,14 +1,6 @@
-import createApp from "./app";
-import { loadRootEnv } from "./env";
-import { createPool, databaseUrlFromEnv } from "./modules/persistence/database";
-import { VitalSamplesRepository } from "./modules/persistence/vitalSamplesRepository";
+import { appFromEnv } from "./appFromEnv";
 
-loadRootEnv();
-
-const databaseUrl = databaseUrlFromEnv();
-const vitalSamples = databaseUrl
-  ? new VitalSamplesRepository(createPool(databaseUrl))
-  : null;
+const { app, vitalSamples } = appFromEnv();
 
 if (vitalSamples) {
   // Say at startup, not at the first save, when Tiger Data can't take samples.
@@ -28,6 +20,4 @@ if (vitalSamples) {
   );
 }
 
-createApp({ vitalSamples }).listen(4000, "0.0.0.0", () =>
-  console.log("Backend on 4000"),
-);
+app.listen(4000, "0.0.0.0", () => console.log("Backend on 4000"));

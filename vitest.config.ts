@@ -10,6 +10,7 @@ export default defineConfig({
       "backend/test/vitalSamplesRepository.test.ts",
       "backend/test/videoFrames.test.ts",
       "backend/test/vitalsService.test.ts",
+      "backend/test/vercelEntry.test.ts",
     ],
     exclude: ["**/node_modules/**", "PrepTalk/**"],
   },
