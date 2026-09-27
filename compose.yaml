@@ -1,0 +1,63 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    environment:
+      NODE_ENV: development
+      DOCKER_DEV: "1"
+      CHOKIDAR_USEPOLLING: "true"
+      DEV_HOST: ${DEV_HOST:-localhost}
+      DATABASE_URL: postgres://preptalk:${POSTGRES_PASSWORD:-preptalk}@db:5432/preptalk
+      SMARTSPECTRA_API_KEY: ${SMARTSPECTRA_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+    ports:
+      - "127.0.0.1:5173:5173"
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - ./backend/src:/app/backend/src:ro
+      - ./frontend/src:/app/frontend/src:ro
+      - ./frontend/index.html:/app/frontend/index.html:ro
+      - ./frontend/vite.config.ts:/app/frontend/vite.config.ts:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: timescale/timescaledb:2.30.1-pg17-oss
+    environment:
+      POSTGRES_USER: preptalk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-preptalk}
+      POSTGRES_DB: preptalk
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./docker/db/init.sql:/docker-entrypoint-initdb.d/001-timescaledb.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U preptalk -d preptalk"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  proxy:
+    image: caddy:2.11.4-alpine
+    environment:
+      DEV_HOST: ${DEV_HOST:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  db_data:
+  caddy_data:
+  caddy_config:
