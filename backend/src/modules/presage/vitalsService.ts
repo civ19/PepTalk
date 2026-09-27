@@ -4,6 +4,15 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { decodeMetrics } from "@smartspectra/node-sdk/messages";
 import {
+  EXPRESSIONS,
+  emptyScores,
+  expressionName,
+  summarizeExpressions,
+  type ExpressionName,
+  type ExpressionPoint,
+  type ExpressionShare,
+} from "./expressions";
+import {
   FRAME_HEIGHT,
   FRAME_RATE,
   FRAME_WIDTH,
@@ -25,6 +34,10 @@ export interface VitalPoint {
 export interface VitalsResult {
   heartRate: VitalPoint[];
   breathingRate: VitalPoint[];
+  expressions: ExpressionPoint[];
+  /** The expression Presage scored highest for the most seconds. */
+  dominantExpression: ExpressionName | null;
+  expressionShares: ExpressionShare[];
   cameraFacingPercent: number | null;
   cameraFacingSamples: number;
   possibleBreathInterruptions: number;
@@ -106,6 +119,11 @@ export async function analyzeVideo(
       const heartRate = new Map<number, VitalPoint>();
       const breathingRate = new Map<number, VitalPoint>();
       const facing = new Map<number, boolean>();
+      // Per second: each expression's summed score over the stable samples, and how many.
+      const expressionSums = new Map<
+        number,
+        { scores: Record<ExpressionName, number>; samples: number }
+      >();
       const hints = new Set<string>();
       let firstTimestamp: number | undefined;
       const time = (timestamp: number | undefined) => {
@@ -151,6 +169,21 @@ export async function analyzeVideo(
             const estimate = cameraFacing(landmarks.value);
             if (estimate !== null)
               facing.set(time(Number(landmarks.timestamp)), estimate);
+          }
+          for (const expression of data.face?.expression ?? []) {
+            if (!expression.stable || !expression.scores?.length) continue;
+            const second = time(Number(expression.timestamp));
+            const sum = expressionSums.get(second) ?? {
+              scores: emptyScores(),
+              samples: 0,
+            };
+            for (const score of expression.scores) {
+              const name = expressionName(score.type);
+              if (name && Number.isFinite(score.confidence))
+                sum.scores[name] += score.confidence!;
+            }
+            sum.samples++;
+            expressionSums.set(second, sum);
           }
         } catch (error) {
           fail(
@@ -217,6 +250,17 @@ export async function analyzeVideo(
         )
           interruptions++;
       }
+      const expressions = [...expressionSums]
+        .sort(([a], [b]) => a - b)
+        .map(([timeSeconds, { scores, samples }]) => ({
+          timeSeconds,
+          scores: Object.fromEntries(
+            EXPRESSIONS.map((name) => [
+              name,
+              Math.round((scores[name] / samples) * 10) / 10,
+            ]),
+          ) as Record<ExpressionName, number>,
+        }));
       return {
         heartRate: [...heartRate.values()].sort(
           (a, b) => a.timeSeconds - b.timeSeconds,
@@ -224,6 +268,8 @@ export async function analyzeVideo(
         breathingRate: [...breathingRate.values()].sort(
           (a, b) => a.timeSeconds - b.timeSeconds,
         ),
+        expressions,
+        ...summarizeExpressions(expressions),
         cameraFacingPercent: facing.size
           ? Math.round(
               (100 * [...facing.values()].filter(Boolean).length) / facing.size,

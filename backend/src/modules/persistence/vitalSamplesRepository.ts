@@ -2,10 +2,20 @@
 // second of a session's recording. Schema:
 // backend/db/migrations/001_presage_vital_samples.sql (npm run db:migrate).
 
+import { EXPRESSIONS, type ExpressionPoint } from "../presage/expressions";
 import type { VitalPoint, VitalsResult } from "../presage/vitalsService";
 import type { SqlClient } from "./database";
 
-type Readings = Pick<VitalsResult, "heartRate" | "breathingRate">;
+type Readings = Pick<VitalsResult, "heartRate" | "breathingRate"> & {
+  expressions?: ExpressionPoint[];
+};
+
+/** An expression_scores entry, in the shape the table already holds: type is Presage's number. */
+export interface ExpressionScoreEntry {
+  name: string;
+  type: number;
+  confidence: number;
+}
 
 export interface VitalSampleRow {
   elapsedSeconds: number;
@@ -17,6 +27,8 @@ export interface VitalSampleRow {
   breathingRateBpm: number | null;
   breathingConfidence: number | null;
   breathingStable: boolean | null;
+  expressionScores: ExpressionScoreEntry[] | null;
+  expressionStable: boolean | null;
 }
 
 /** The table's checks reject rates of 0 or below, so those count as no reading. */
@@ -24,8 +36,8 @@ const usable = (point: VitalPoint | undefined): VitalPoint | undefined =>
   point && point.value > 0 ? point : undefined;
 
 /**
- * One row per second with a usable heart or breathing reading, in time order.
- * A second that has only one of the two stores NULLs for the other.
+ * One row per second with a usable heart or breathing reading or expression
+ * scores, in time order. Whatever a second lacks is stored as NULL.
  */
 export function toSampleRows(
   startedAt: Date,
@@ -35,14 +47,18 @@ export function toSampleRows(
   const breathing = new Map(
     readings.breathingRate.map((p) => [p.timeSeconds, p]),
   );
-  const seconds = [...new Set([...heart.keys(), ...breathing.keys()])].sort(
-    (a, b) => a - b,
+  const expressions = new Map(
+    (readings.expressions ?? []).map((p) => [p.timeSeconds, p]),
   );
+  const seconds = [
+    ...new Set([...heart.keys(), ...breathing.keys(), ...expressions.keys()]),
+  ].sort((a, b) => a - b);
   const rows: VitalSampleRow[] = [];
   for (const second of seconds) {
     const h = usable(heart.get(second));
     const b = usable(breathing.get(second));
-    if (!h && !b) continue;
+    const e = expressions.get(second);
+    if (!h && !b && !e) continue;
     rows.push({
       elapsedSeconds: second,
       recordedAt: new Date(startedAt.getTime() + second * 1000).toISOString(),
@@ -52,6 +68,15 @@ export function toSampleRows(
       breathingRateBpm: b?.value ?? null,
       breathingConfidence: b?.confidence ?? null,
       breathingStable: b?.stable ?? null,
+      expressionScores: e
+        ? EXPRESSIONS.map((name, i) => ({
+            name,
+            type: i + 1,
+            confidence: e.scores[name],
+          }))
+        : null,
+      // Expression points are averaged from stable samples only.
+      expressionStable: e ? true : null,
     });
   }
   return rows;
@@ -85,10 +110,13 @@ export class VitalSamplesRepository {
        )
        INSERT INTO presage_vital_samples
          (session_id, recorded_at, elapsed_seconds, heart_rate_bpm, heart_confidence, heart_stable,
-          breathing_rate_bpm, breathing_confidence, breathing_stable)
-       SELECT $1::uuid, t.*
+          breathing_rate_bpm, breathing_confidence, breathing_stable, expression_scores, expression_stable)
+       SELECT $1::uuid, t.recorded_at, t.elapsed_seconds, t.heart_rate_bpm, t.heart_confidence, t.heart_stable,
+              t.breathing_rate_bpm, t.breathing_confidence, t.breathing_stable, t.expression_scores::jsonb, t.expression_stable
        FROM unnest($2::timestamptz[], $3::int[], $4::float8[], $5::float8[], $6::bool[],
-                   $7::float8[], $8::float8[], $9::bool[]) AS t
+                   $7::float8[], $8::float8[], $9::bool[], $10::text[], $11::bool[])
+         AS t(recorded_at, elapsed_seconds, heart_rate_bpm, heart_confidence, heart_stable,
+              breathing_rate_bpm, breathing_confidence, breathing_stable, expression_scores, expression_stable)
        ON CONFLICT (session_id, recorded_at) DO UPDATE SET
          elapsed_seconds = EXCLUDED.elapsed_seconds,
          heart_rate_bpm = EXCLUDED.heart_rate_bpm,
@@ -96,7 +124,9 @@ export class VitalSamplesRepository {
          heart_stable = EXCLUDED.heart_stable,
          breathing_rate_bpm = EXCLUDED.breathing_rate_bpm,
          breathing_confidence = EXCLUDED.breathing_confidence,
-         breathing_stable = EXCLUDED.breathing_stable`,
+         breathing_stable = EXCLUDED.breathing_stable,
+         expression_scores = EXCLUDED.expression_scores,
+         expression_stable = EXCLUDED.expression_stable`,
       [
         sessionId,
         recordedAt,
@@ -107,6 +137,11 @@ export class VitalSamplesRepository {
         rows.map((row) => row.breathingRateBpm),
         rows.map((row) => row.breathingConfidence),
         rows.map((row) => row.breathingStable),
+        // JSON text, cast to jsonb in SQL; pg and PGlite both pass text[] through as is.
+        rows.map((row) =>
+          row.expressionScores ? JSON.stringify(row.expressionScores) : null,
+        ),
+        rows.map((row) => row.expressionStable),
       ],
     );
     return rows.length;

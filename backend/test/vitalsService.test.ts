@@ -90,6 +90,45 @@ vi.mock("@smartspectra/node-sdk/messages", () => ({
         { value: 14, confidence: 70, stable: true, timestamp: 30_000_000 },
       ],
     },
+    // As the real decoder gives them: enum names and string timestamps.
+    face: {
+      expression: [
+        {
+          stable: true,
+          timestamp: "3100000",
+          scores: [
+            { type: "NEUTRAL", confidence: 80 },
+            { type: "HAPPY", confidence: 20 },
+          ],
+        },
+        {
+          stable: true,
+          timestamp: "3600000",
+          scores: [
+            { type: "NEUTRAL", confidence: 60 },
+            { type: "HAPPY", confidence: 40 },
+          ],
+        },
+        {
+          stable: false,
+          timestamp: "4200000",
+          scores: [{ type: "ANGRY", confidence: 99 }],
+        },
+        {
+          stable: true,
+          timestamp: "4500000",
+          scores: [
+            { type: 6, confidence: 30 },
+            { type: 5, confidence: 70 },
+          ],
+        },
+        {
+          stable: true,
+          timestamp: "5500000",
+          scores: [{ type: "NEUTRAL", confidence: 90 }],
+        },
+      ],
+    },
   }),
 }));
 vi.mock("../src/modules/presage/videoFrames", () => ({
@@ -132,6 +171,34 @@ describe("analyzeVideo", () => {
     ]);
     expect(result.breathingRate).toEqual([
       { timeSeconds: 30, value: 14, confidence: 70, stable: true },
+    ]);
+  });
+
+  it("averages expression scores per second and finds the dominant one", async () => {
+    const result = await analyzeVideo(
+      Buffer.from("video"),
+      "video/webm",
+      "key",
+    );
+
+    // Unstable samples are skipped; each second averages its stable ones.
+    expect(result.expressions.map((point) => point.timeSeconds)).toEqual([
+      3, 4, 5,
+    ]);
+    expect(result.expressions[0].scores).toMatchObject({
+      neutral: 70,
+      happy: 30,
+      angry: 0,
+    });
+    expect(result.expressions[1].scores).toMatchObject({
+      neutral: 30,
+      happy: 70,
+      angry: 0,
+    });
+    expect(result.dominantExpression).toBe("neutral");
+    expect(result.expressionShares).toEqual([
+      { name: "neutral", percent: 67 },
+      { name: "happy", percent: 33 },
     ]);
   });
 

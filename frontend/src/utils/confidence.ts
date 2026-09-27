@@ -7,11 +7,13 @@ export interface ConfidenceResult {
 }
 
 const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
-const reliable = (points: VitalPoint[] | undefined) =>
+/** Readings below this confidence are left out of averages, charts and scores. */
+export const RELIABLE_CONFIDENCE = 60;
+export const reliable = (points: VitalPoint[] | undefined) =>
   (points ?? []).filter(
     (point) =>
       point.stable &&
-      point.confidence >= 60 &&
+      point.confidence >= RELIABLE_CONFIDENCE &&
       Number.isFinite(point.value) &&
       point.value > 0,
   );

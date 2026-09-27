@@ -33,6 +33,8 @@ describe("toSampleRows", () => {
         breathingRateBpm: null,
         breathingConfidence: null,
         breathingStable: null,
+        expressionScores: null,
+        expressionStable: null,
       },
       {
         elapsedSeconds: 13,
@@ -43,6 +45,8 @@ describe("toSampleRows", () => {
         breathingRateBpm: 14,
         breathingConfidence: 70,
         breathingStable: true,
+        expressionScores: null,
+        expressionStable: null,
       },
     ]);
   });
@@ -171,6 +175,55 @@ describe("VitalSamplesRepository", () => {
       [],
     );
     expect(rows[0].n).toBe(0);
+  });
+
+  it("stores each second's expression scores in the table's existing shape", async () => {
+    const db = await migratedDb();
+    const repository = new VitalSamplesRepository(db);
+    const scores = {
+      angry: 1,
+      contempt: 0,
+      disgust: 0,
+      fear: 0,
+      happy: 9,
+      neutral: 80,
+      sad: 0,
+      surprise: 10,
+    };
+
+    // Second 3 has only expressions: pulse hasn't warmed up yet.
+    const written = await repository.replaceSession(SESSION, STARTED_AT, {
+      heartRate: [point(12, 76)],
+      breathingRate: [],
+      expressions: [
+        { timeSeconds: 3, scores },
+        { timeSeconds: 12, scores },
+      ],
+    });
+
+    expect(written).toBe(2);
+    const { rows } = await db.query(
+      "SELECT elapsed_seconds, heart_rate_bpm, expression_scores, expression_stable FROM presage_vital_samples ORDER BY recorded_at",
+      [],
+    );
+    expect(
+      rows.map((row) => [row.elapsed_seconds, row.heart_rate_bpm]),
+    ).toEqual([
+      [3, null],
+      [12, 76],
+    ]);
+    expect(rows[0].expression_stable).toBe(true);
+    expect(rows[0].expression_scores).toHaveLength(8);
+    expect(rows[0].expression_scores).toContainEqual({
+      name: "neutral",
+      type: 6,
+      confidence: 80,
+    });
+    expect(rows[0].expression_scores[0]).toEqual({
+      name: "angry",
+      type: 1,
+      confidence: 1,
+    });
   });
 
   it("reports a database without the table", async () => {

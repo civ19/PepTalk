@@ -15,6 +15,7 @@ import {
 import type { PracticeCategory, PracticeSession } from "./types/interview";
 import { extractMetrics, formatDuration } from "./utils/videoMetrics";
 import { confidenceFor, samePractice } from "./utils/confidence";
+import { breathingNote, dominantExpression } from "./utils/bodySignals";
 
 type Page = "overview" | "practice" | "recording" | "history";
 const pagePath: Record<Exclude<Page, "recording">, string> = {
@@ -428,6 +429,8 @@ function VitalSummary({
   };
   const pulse = vitals ? average(vitals.heartRate) : null;
   const breath = vitals ? average(vitals.breathingRate) : null;
+  const breathingHelp = breathingNote(session);
+  const expression = dominantExpression(vitals);
   const trend = (
     points: NonNullable<PracticeSession["vitals"]>["heartRate"],
     name: string,
@@ -487,6 +490,7 @@ function VitalSummary({
         </strong>
       </div>
       {vitals && trend(vitals.breathingRate, "Breathing rate")}
+      {breathingHelp ? <p className="vital-hints">{breathingHelp}</p> : null}
       <div className="vital-row">
         <span>Camera-facing estimate</span>
         <strong>
@@ -494,6 +498,18 @@ function VitalSummary({
           <small>{vitals?.cameraFacingPercent != null ? "%" : ""}</small>
         </strong>
       </div>
+      <div className="vital-row">
+        <span>Dominant expression</span>
+        <strong>
+          {expression?.label ?? "—"}{" "}
+          <small>
+            {expression ? `${expression.percent}% of the time` : ""}
+          </small>
+        </strong>
+      </div>
+      {expression?.others.length ? (
+        <p className="vital-hints">Also: {expression.others.join(" · ")}</p>
+      ) : null}
       <div className="vital-row">
         <span>Possible breath interruptions</span>
         <strong>{vitals?.possibleBreathInterruptions ?? "—"}</strong>
@@ -509,7 +525,9 @@ function VitalSummary({
       <p>
         Camera-facing is a rough face-landmark cue, not verified eye contact.
         Breathing measurements during speech can be unreliable; interruptions
-        are prompts to review the video.
+        are prompts to review the video. The dominant expression is the one
+        Presage scored highest for the most seconds; it describes your face, not
+        how you feel.
       </p>
       {vitals?.hints?.length ? (
         <p className="vital-hints">Framing tips: {vitals.hints.join(" · ")}</p>
