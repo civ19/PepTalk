@@ -11,6 +11,9 @@ services:
       DEV_HOST: ${DEV_HOST:-localhost}
       DATABASE_URL: postgres://preptalk:${POSTGRES_PASSWORD:-preptalk}@db:5432/preptalk
       SMARTSPECTRA_API_KEY: ${SMARTSPECTRA_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
     ports:
       - "127.0.0.1:5173:5173"
       - "127.0.0.1:4000:4000"

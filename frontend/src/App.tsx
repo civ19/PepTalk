@@ -1,17 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import "./App.css";
 import {
+  analyzeTranscript,
+  analyzeVitals,
   deleteRecording,
   getRecording,
   getSessions,
   saveRecording,
   saveSessions,
+  transcribeRecording,
 } from "./services/api";
 import type { PracticeCategory, PracticeSession } from "./types/interview";
 import { extractMetrics, formatDuration } from "./utils/videoMetrics";
+import { confidenceFor, samePractice } from "./utils/confidence";
 
-type Page = "overview" | "practice" | "history";
+type Page = "overview" | "practice" | "recording" | "history";
+const pagePath: Record<Exclude<Page, "recording">, string> = {
+  overview: "/",
+  practice: "/practice",
+  history: "/history",
+};
+
+function pageFromPath(path: string): Page {
+  if (path === "/history") return "history";
+  if (path.startsWith("/practice")) return "practice";
+  return "overview";
+}
 type IconName =
   | "grid"
   | "video"
@@ -216,7 +232,7 @@ function TrendChart({ sessions }: { sessions: PracticeSession[] }) {
           <polyline
             points={line}
             fill="none"
-            stroke="#7659e8"
+            stroke="#598fe8"
             strokeWidth="3.5"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -228,7 +244,7 @@ function TrendChart({ sessions }: { sessions: PracticeSession[] }) {
               cx={point.x}
               cy={point.y}
               r="7"
-              fill="#7659e8"
+              fill="#598fe8"
               stroke="white"
               strokeWidth="3"
             />
@@ -276,8 +292,247 @@ function SessionRow({
   );
 }
 
+function PracticeProgress({
+  session,
+  sessions,
+}: {
+  session: PracticeSession;
+  sessions: PracticeSession[];
+}) {
+  const attempts = sessions
+    .filter((item) => samePractice(item, session))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const currentIndex = attempts.findIndex((item) => item.id === session.id);
+  const previous = currentIndex > 0 ? attempts[currentIndex - 1] : null;
+  const currentScore = confidenceFor(session);
+  const previousScore = previous ? confidenceFor(previous).score : null;
+  const delta =
+    currentScore.score !== null && previousScore !== null
+      ? currentScore.score - previousScore
+      : null;
+  return (
+    <section className="panel progress-panel">
+      <span className="section-eyebrow">THIS PRACTICE</span>
+      <h3>Overall confidence estimate</h3>
+      <p className="helper-copy">
+        A practice score from available speech and body signals. It does not
+        measure how you feel.
+      </p>
+      <div className="confidence-value">
+        {currentScore.score ?? "—"}
+        <small>
+          {currentScore.score !== null
+            ? "/ 100"
+            : "Add a transcript or body data"}
+        </small>
+      </div>
+      <div
+        className="confidence-scale"
+        role="img"
+        aria-label={
+          currentScore.score === null
+            ? "No score yet"
+            : `Confidence estimate ${currentScore.score} out of 100, ${currentScore.stage} stage`
+        }
+      >
+        <span className="scale-red" />
+        <span className="scale-yellow" />
+        <span className="scale-green" />
+        {currentScore.score !== null && (
+          <i
+            className="scale-marker current"
+            style={{ left: `${currentScore.score}%` }}
+            title={`This attempt: ${currentScore.score}`}
+          />
+        )}
+        {previousScore !== null && (
+          <i
+            className="scale-marker previous"
+            style={{ left: `${previousScore}%` }}
+            title={`Previous attempt: ${previousScore}`}
+          />
+        )}
+      </div>
+      <div className="scale-labels">
+        <span>Build</span>
+        <span>Develop</span>
+        <span>Strong</span>
+      </div>
+      <p className="progress-comparison">
+        Attempt {currentIndex + 1} of {attempts.length} for “{session.title}”
+        {delta !== null
+          ? ` · ${delta > 0 ? "+" : ""}${delta} points vs previous attempt`
+          : " · First scored attempt"}
+      </p>
+      {attempts.length > 1 && (
+        <div
+          className="attempt-history"
+          aria-label="Scores for this practice over time"
+        >
+          {attempts.map((item, index) => {
+            const score = confidenceFor(item).score;
+            return (
+              <div
+                key={item.id}
+                className={
+                  item.id === session.id ? "attempt active" : "attempt"
+                }
+                title={`Attempt ${index + 1}: ${score ?? "no score"}`}
+              >
+                <span style={{ height: `${score ?? 3}%` }} />
+                <small>{index + 1}</small>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {currentScore.factors.length > 0 && (
+        <div className="confidence-factors">
+          {currentScore.factors.map((factor) => (
+            <div key={factor.name}>
+              <span>{factor.name}</span>
+              <strong>{factor.score}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function VitalSummary({
+  session,
+  onRetry,
+  busy,
+}: {
+  session: PracticeSession;
+  onRetry: () => void;
+  busy: boolean;
+}) {
+  const vitals = session.vitals;
+  const reliable = (
+    points: NonNullable<PracticeSession["vitals"]>["heartRate"],
+  ) =>
+    points.filter(
+      (point) => point.stable && point.confidence >= 60 && point.value > 0,
+    );
+  const average = (
+    points: NonNullable<PracticeSession["vitals"]>["heartRate"],
+  ) => {
+    const good = reliable(points);
+    return good.length
+      ? Math.round(
+          good.reduce((sum, point) => sum + point.value, 0) / good.length,
+        )
+      : null;
+  };
+  const pulse = vitals ? average(vitals.heartRate) : null;
+  const breath = vitals ? average(vitals.breathingRate) : null;
+  const trend = (
+    points: NonNullable<PracticeSession["vitals"]>["heartRate"],
+    name: string,
+  ) => {
+    const good = reliable(points);
+    if (good.length < 2) return null;
+    const values = good.map((point) => point.value);
+    const min = Math.min(...values);
+    const range = Math.max(1, Math.max(...values) - min);
+    const first = good[0].timeSeconds;
+    const seconds = Math.max(1, good[good.length - 1].timeSeconds - first);
+    const coordinates = good
+      .map(
+        (point) =>
+          `${Math.round(((point.timeSeconds - first) / seconds) * 240)},${Math.round(40 - ((point.value - min) / range) * 32)}`,
+      )
+      .join(" ");
+    return (
+      <div className="vital-trend">
+        <svg
+          viewBox="0 0 240 48"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={`${name} over this recording`}
+        >
+          <polyline
+            points={coordinates}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <small>{good.length} stable readings</small>
+      </div>
+    );
+  };
+  return (
+    <section className="panel vitals-panel">
+      <span className="side-icon">
+        <Icon name="heart" size={20} />
+      </span>
+      <h3>
+        Body signals <small>Presage</small>
+      </h3>
+      <div className="vital-row">
+        <span>Heart rate</span>
+        <strong>
+          {pulse ?? "—"} <small>{pulse !== null ? "bpm" : ""}</small>
+        </strong>
+      </div>
+      {vitals && trend(vitals.heartRate, "Heart rate")}
+      <div className="vital-row">
+        <span>Breathing rate</span>
+        <strong>
+          {breath ?? "—"} <small>{breath !== null ? "breaths/min" : ""}</small>
+        </strong>
+      </div>
+      {vitals && trend(vitals.breathingRate, "Breathing rate")}
+      <div className="vital-row">
+        <span>Camera-facing estimate</span>
+        <strong>
+          {vitals?.cameraFacingPercent ?? "—"}
+          <small>{vitals?.cameraFacingPercent != null ? "%" : ""}</small>
+        </strong>
+      </div>
+      <div className="vital-row">
+        <span>Possible breath interruptions</span>
+        <strong>{vitals?.possibleBreathInterruptions ?? "—"}</strong>
+      </div>
+      {session.category === "Interview" ? (
+        <p>Interview practice uses a stronger camera-facing target (65%).</p>
+      ) : (
+        <p>
+          {session.category} practice uses a looser camera-facing target.
+          Looking at notes or across an audience is normal.
+        </p>
+      )}
+      <p>
+        Camera-facing is a rough face-landmark cue, not verified eye contact.
+        Breathing measurements during speech can be unreliable; interruptions
+        are prompts to review the video.
+      </p>
+      {vitals?.hints?.length ? (
+        <p className="vital-hints">Framing tips: {vitals.hints.join(" · ")}</p>
+      ) : null}
+      <button
+        className="button button-outline"
+        onClick={onRetry}
+        disabled={!session.hasRecording || busy}
+      >
+        {busy
+          ? "Analyzing…"
+          : vitals
+            ? "Reanalyze with Presage"
+            : "Analyze with Presage"}
+      </button>
+    </section>
+  );
+}
+
 export default function App() {
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<Page>(() =>
+    pageFromPath(window.location.pathname),
+  );
   const [sessions, setSessions] = useState<PracticeSession[]>(getSessions);
   const sessionsRef = useRef(sessions);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -286,19 +541,33 @@ export default function App() {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<PracticeCategory>("Presentation");
   const [isRecording, setIsRecording] = useState(false);
+  const [isRequesting, setIsRequesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isAnalyzingVitals, setIsAnalyzingVitals] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("preptalk.theme");
+    return saved === "light" || saved === "dark"
+      ? saved
+      : window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+  });
   const [elapsed, setElapsed] = useState(0);
   const [transcript, setTranscript] = useState("");
   const [draftTranscript, setDraftTranscript] = useState("");
   const [status, setStatus] = useState("");
   const [speechStatus, setSpeechStatus] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
+  const popoutRef = useRef<HTMLElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const speechRef = useRef<SpeechEngine | null>(null);
   const transcriptRef = useRef("");
   const startedAtRef = useRef(0);
   const recordingRef = useRef(false);
+  const captureRequestedRef = useRef(false);
 
   const selected =
     sessions.find((session) => session.id === selectedId) ?? null;
@@ -317,7 +586,7 @@ export default function App() {
     [transcript, elapsed],
   );
 
-  function commitSessions(next: PracticeSession[]) {
+  const commitSessions = useCallback((next: PracticeSession[]) => {
     sessionsRef.current = next;
     setSessions(next);
     try {
@@ -327,7 +596,15 @@ export default function App() {
         "Session details could not be saved in this browser. Check available storage.",
       );
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", theme === "dark" ? "#0c172b" : "#f4f8ff");
+    localStorage.setItem("preptalk.theme", theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!isRecording) return;
@@ -380,32 +657,81 @@ export default function App() {
     [],
   );
 
+  useEffect(() => {
+    if (window.location.pathname === "/practice/record") {
+      window.history.replaceState(null, "", "/practice");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (page !== "recording") return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    popoutRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [page]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (recordingRef.current || isRequesting || isSaving) {
+        window.history.pushState(null, "", "/practice/record");
+        setStatus("Finish this recording before leaving the studio.");
+        return;
+      }
+      setPage(pageFromPath(window.location.pathname));
+      setSelectedId(null);
+      setStatus("");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [isRequesting, isSaving]);
+
   function navigate(next: Page) {
-    if ((isRecording || isSaving) && next !== "practice") {
+    if (next === "recording") return;
+    if (isRecording || isRequesting || isSaving) {
       setStatus("Finish saving this recording before leaving the studio.");
       return;
+    }
+    if (window.location.pathname !== pagePath[next]) {
+      window.history.pushState(null, "", pagePath[next]);
     }
     setPage(next);
     setSelectedId(null);
     setStatus("");
   }
 
-  function openSession(id: string, preserveStatus = false) {
+  const openSession = useCallback((id: string, preserveStatus = false) => {
     setSelectedId(id);
     const session = sessionsRef.current.find((item) => item.id === id);
     setDraftTranscript(session?.transcript ?? "");
+    window.history.pushState(null, "", "/history");
     setPage("history");
     if (!preserveStatus) setStatus("");
-  }
+  }, []);
 
-  function updateTranscript(value: string) {
+  const updateTranscript = useCallback((value: string) => {
     transcriptRef.current = value;
     setTranscript(value);
-  }
+  }, []);
 
-  async function startRecording() {
+  function enterRecording() {
     if (!title.trim()) {
       setStatus("Give this practice run a name first.");
+      return;
+    }
+    captureRequestedRef.current = true;
+    setIsRequesting(true);
+    window.history.pushState(null, "", "/practice/record");
+    setPage("recording");
+    setStatus("");
+  }
+
+  const startRecording = useCallback(async () => {
+    if (!title.trim()) {
+      setStatus("Give this practice run a name first.");
+      setIsRequesting(false);
       return;
     }
     if (
@@ -415,8 +741,10 @@ export default function App() {
       setStatus(
         "This browser cannot record video. Try a current version of Chrome, Edge, or Safari.",
       );
+      setIsRequesting(false);
       return;
     }
+    setIsRequesting(true);
     setStatus("");
     setSpeechStatus("");
     setElapsed(0);
@@ -431,6 +759,7 @@ export default function App() {
       setStatus(
         "Camera and microphone access is needed to record. Check browser permissions and try again.",
       );
+      setIsRequesting(false);
       return;
     }
     streamRef.current = stream;
@@ -455,6 +784,7 @@ export default function App() {
       stream.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       setStatus("Recording could not start on this device.");
+      setIsRequesting(false);
       return;
     }
     recorderRef.current = recorder;
@@ -463,6 +793,7 @@ export default function App() {
     startedAtRef.current = Date.now();
     recordingRef.current = true;
     setIsRecording(true);
+    setIsRequesting(false);
     recorder.ondataavailable = (event) => {
       if (event.data.size) chunks.push(event.data);
     };
@@ -486,24 +817,94 @@ export default function App() {
           "Your session was saved, but browser storage could not keep the video.",
         );
       }
-      const text = transcriptRef.current.trim();
-      const metrics = extractMetrics(text, durationSeconds);
-      const session: PracticeSession = {
+      let text = transcriptRef.current.trim();
+      let transcriptSource: PracticeSession["transcriptSource"] = text
+        ? "browser"
+        : undefined;
+      let fillerWords: PracticeSession["fillerWords"];
+      let vitals: PracticeSession["vitals"];
+      const initialMetrics = extractMetrics(text, durationSeconds);
+      const initialSession: PracticeSession = {
         id,
         title: currentTitle,
         category: currentCategory,
         createdAt: new Date().toISOString(),
         durationSeconds,
         transcript: text,
-        wordCount: metrics.wordCount,
-        wordsPerMinute: metrics.wordsPerMinute,
-        fillerCount: metrics.fillerCount,
+        transcriptSource,
+        wordCount: initialMetrics.wordCount,
+        wordsPerMinute: initialMetrics.wordsPerMinute,
+        fillerCount: initialMetrics.fillerCount,
         hasRecording,
       };
-      commitSessions([session, ...sessionsRef.current]);
+      commitSessions([initialSession, ...sessionsRef.current]);
       setIsSaving(false);
       setTitle("");
       openSession(id, true);
+      if (blob.size) {
+        setStatus(
+          "Recording saved. ElevenLabs, Gemini, and Presage are analyzing it.",
+        );
+        const [transcription, bodyAnalysis] = await Promise.allSettled([
+          transcribeRecording(blob),
+          analyzeVitals(blob),
+        ]);
+        const messages: string[] = [];
+        if (transcription.status === "fulfilled") {
+          const result = transcription.value;
+          text = result.text.trim();
+          transcriptSource = "elevenlabs";
+          fillerWords = result.fillerWords ?? undefined;
+          messages.push(
+            result.analysisError
+              ? `Transcript ready. ${result.analysisError}`
+              : "Transcript and Gemini analysis ready.",
+          );
+        } else {
+          messages.push(
+            transcription.reason instanceof Error
+              ? transcription.reason.message
+              : "Transcription failed.",
+          );
+        }
+        if (bodyAnalysis.status === "fulfilled") {
+          vitals = bodyAnalysis.value;
+          messages.push("Presage body signals ready.");
+        } else
+          messages.push(
+            bodyAnalysis.reason instanceof Error
+              ? bodyAnalysis.reason.message
+              : "Presage analysis failed.",
+          );
+        setStatus(messages.join(" "));
+      }
+      const metrics = extractMetrics(text, durationSeconds);
+      const transcriptIsUnchanged =
+        sessionsRef.current.find((session) => session.id === id)?.transcript ===
+        initialSession.transcript;
+      commitSessions(
+        sessionsRef.current.map((session) =>
+          session.id === id
+            ? {
+                ...session,
+                ...(transcriptIsUnchanged
+                  ? {
+                      transcript: text,
+                      transcriptSource,
+                      wordCount: metrics.wordCount,
+                      wordsPerMinute: metrics.wordsPerMinute,
+                      fillerCount: fillerWords
+                        ? fillerWords.reduce((sum, item) => sum + item.count, 0)
+                        : metrics.fillerCount,
+                      fillerWords,
+                    }
+                  : {}),
+                vitals,
+              }
+            : session,
+        ),
+      );
+      if (transcriptIsUnchanged) setDraftTranscript(text);
     };
     const Speech = getSpeechConstructor();
     if (Speech) {
@@ -542,7 +943,13 @@ export default function App() {
       setSpeechStatus(
         "Live transcription is unavailable. You can add a transcript after the run.",
       );
-  }
+  }, [category, commitSessions, openSession, title, updateTranscript]);
+
+  useEffect(() => {
+    if (page !== "recording" || !captureRequestedRef.current) return;
+    captureRequestedRef.current = false;
+    void startRecording();
+  }, [page, startRecording]);
 
   function stopRecording() {
     if (!recordingRef.current) return;
@@ -567,14 +974,116 @@ export default function App() {
           ? {
               ...session,
               transcript: cleaned,
+              transcriptSource: "manual" as const,
               wordCount: metrics.wordCount,
               wordsPerMinute: metrics.wordsPerMinute,
               fillerCount: metrics.fillerCount,
+              fillerWords: undefined,
             }
           : session,
       ),
     );
-    setStatus("Transcript and speech metrics updated.");
+    setStatus(
+      "Transcript updated. Run Gemini analysis again for this version.",
+    );
+  }
+
+  async function retryTranscription() {
+    if (!selected?.hasRecording) return;
+    setIsTranscribing(true);
+    try {
+      const blob = await getRecording(selected.id);
+      if (!blob) throw new Error("Recording unavailable in this browser.");
+      const result = await transcribeRecording(blob);
+      const text = result.text.trim();
+      const metrics = extractMetrics(text, selected.durationSeconds);
+      commitSessions(
+        sessions.map((session) =>
+          session.id === selected.id
+            ? {
+                ...session,
+                transcript: text,
+                transcriptSource: "elevenlabs" as const,
+                wordCount: metrics.wordCount,
+                wordsPerMinute: metrics.wordsPerMinute,
+                fillerCount: result.fillerWords
+                  ? result.fillerWords.reduce(
+                      (sum, item) => sum + item.count,
+                      0,
+                    )
+                  : metrics.fillerCount,
+                fillerWords: result.fillerWords ?? undefined,
+              }
+            : session,
+        ),
+      );
+      setDraftTranscript(text);
+      setStatus(
+        result.analysisError
+          ? `Transcript ready. ${result.analysisError}`
+          : "Transcript and Gemini filler analysis are ready.",
+      );
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? error.message : "Transcription failed.",
+      );
+    } finally {
+      setIsTranscribing(false);
+    }
+  }
+
+  async function retryFillerAnalysis() {
+    if (!selected?.transcript.trim()) return;
+    const sessionId = selected.id;
+    const text = selected.transcript;
+    setIsAnalyzing(true);
+    try {
+      const fillerWords = await analyzeTranscript(text);
+      commitSessions(
+        sessionsRef.current.map((session) =>
+          session.id === sessionId && session.transcript === text
+            ? {
+                ...session,
+                fillerWords,
+                fillerCount: fillerWords.reduce(
+                  (sum, item) => sum + item.count,
+                  0,
+                ),
+              }
+            : session,
+        ),
+      );
+      setStatus("Gemini filler analysis is ready.");
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? error.message : "Filler analysis failed.",
+      );
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
+
+  async function retryVitals() {
+    if (!selected?.hasRecording) return;
+    const sessionId = selected.id;
+    setIsAnalyzingVitals(true);
+    try {
+      const blob = await getRecording(sessionId);
+      if (!blob) throw new Error("Recording unavailable in this browser.");
+      const vitals = await analyzeVitals(blob);
+      commitSessions(
+        sessionsRef.current.map((session) =>
+          session.id === sessionId ? { ...session, vitals } : session,
+        ),
+      );
+      setStatus("Presage body signals are ready.");
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? error.message : "Presage analysis failed.",
+      );
+    } finally {
+      setIsAnalyzingVitals(false);
+    }
   }
 
   async function downloadSelected() {
@@ -613,7 +1122,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" inert={page === "recording"}>
       <aside className="sidebar">
         <button
           className="brand"
@@ -640,7 +1149,7 @@ export default function App() {
             Overview
           </button>
           <button
-            className={`nav-item ${page === "practice" ? "active" : ""}`}
+            className={`nav-item ${page === "practice" || page === "recording" ? "active" : ""}`}
             onClick={() => navigate("practice")}
           >
             <Icon name="video" />
@@ -693,10 +1202,20 @@ export default function App() {
                 ? "Overview"
                 : page === "practice"
                   ? "Practice studio"
-                  : "Session history"}
+                  : page === "recording"
+                    ? "Recording"
+                    : "Session history"}
             </strong>
           </div>
           <div className="topbar-right">
+            <button
+              className="theme-toggle"
+              type="button"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            >
+              {theme === "dark" ? "☀ Light" : "☾ Dark"}
+            </button>
             <span className="local-badge">
               <span /> Local workspace
             </span>
@@ -704,7 +1223,7 @@ export default function App() {
           </div>
         </header>
         <div className="page-content">
-          {status && (
+          {status && page !== "recording" && (
             <div className="status-banner" role="status">
               <span>{status}</span>
               <button
@@ -801,7 +1320,7 @@ export default function App() {
               </section>
               <section className="stats-grid" aria-label="Practice statistics">
                 <div className="stat-card">
-                  <span className="stat-icon purple">
+                  <span className="stat-icon blue">
                     <Icon name="video" size={21} />
                   </span>
                   <span className="stat-label">Practice sessions</span>
@@ -910,7 +1429,7 @@ export default function App() {
               </section>
             </>
           )}
-          {page === "practice" && (
+          {(page === "practice" || page === "recording") && (
             <>
               <div className="page-heading">
                 <div>
@@ -947,7 +1466,23 @@ export default function App() {
                       value={title}
                       onChange={(event) => setTitle(event.target.value)}
                       disabled={isRecording || isSaving}
+                      list="previous-practice-titles"
                     />
+                    <datalist id="previous-practice-titles">
+                      {[
+                        ...new Set(
+                          sessions
+                            .filter((item) => item.category === category)
+                            .map((item) => item.title),
+                        ),
+                      ].map((item) => (
+                        <option key={item} value={item} />
+                      ))}
+                    </datalist>
+                    <p className="helper-copy">
+                      Use the same name and practice type on later attempts to
+                      compare progress.
+                    </p>
                     <div className="field-label category-label">
                       Practice type
                     </div>
@@ -970,90 +1505,48 @@ export default function App() {
                         <span className="section-eyebrow">
                           02 / RECORD YOUR RUN
                         </span>
-                        <h3>Camera preview</h3>
+                        <h3>Ready for the camera?</h3>
                       </div>
-                      <span
-                        className={`record-status ${isRecording ? "recording" : ""}`}
-                      >
-                        <span />
-                        {isRecording ? "Recording" : "Ready when you are"}
+                      <span className="record-status">
+                        <span /> Camera is off
                       </span>
                     </div>
-                    <div
-                      className={`camera-stage ${isRecording ? "camera-active" : ""}`}
-                    >
-                      <video ref={videoRef} autoPlay muted playsInline />
-                      {!isRecording && (
-                        <div className="camera-placeholder">
-                          <span className="camera-placeholder-icon">
-                            <Icon name="camera" size={31} />
-                          </span>
-                          <strong>Your camera preview will appear here</strong>
-                          <span>
-                            Camera and microphone access begins when you start.
-                          </span>
-                        </div>
-                      )}
-                      {isRecording && (
-                        <span className="camera-timer">
-                          <span /> REC {formatDuration(elapsed)}
+                    <div className="camera-stage">
+                      <div className="camera-placeholder">
+                        <span className="camera-placeholder-icon">
+                          <Icon name="camera" size={31} />
                         </span>
-                      )}
+                        <strong>Your recording space is one step away</strong>
+                        <span>
+                          The next page asks for camera and microphone access.
+                        </span>
+                      </div>
                     </div>
                     <div className="recording-actions">
                       <div>
-                        <strong>
-                          {isRecording
-                            ? "You’re doing great. Keep going."
-                            : isSaving
-                              ? "Saving your session…"
-                              : "Ready to begin?"}
-                        </strong>
-                        <small>
-                          {isRecording
-                            ? "Speak naturally. You can stop whenever you like."
-                            : "Find a quiet spot with good lighting."}
-                        </small>
+                        <strong>Ready to begin?</strong>
+                        <small>Recording starts after you allow access.</small>
                       </div>
-                      {isRecording ? (
-                        <button
-                          className="button button-stop"
-                          onClick={stopRecording}
-                        >
-                          <Icon name="stop" size={17} /> Finish recording
-                        </button>
-                      ) : (
-                        <button
-                          className="button button-primary"
-                          onClick={startRecording}
-                          disabled={isSaving}
-                        >
-                          <Icon name="video" size={18} /> Start recording
-                        </button>
-                      )}
+                      <button
+                        className="button button-primary"
+                        onClick={enterRecording}
+                      >
+                        <Icon name="video" size={18} /> Start recording
+                      </button>
                     </div>
                   </section>
                   <section className="panel transcript-panel">
                     <div className="panel-header">
                       <div>
-                        <span className="section-eyebrow">YOUR WORDS</span>
-                        <h3>Live transcript</h3>
+                        <span className="section-eyebrow">AFTER YOUR RUN</span>
+                        <h3>Transcript and insights</h3>
                       </div>
-                      <span className="panel-tag">
-                        Browser speech recognition
-                      </span>
+                      <span className="panel-tag">ElevenLabs Scribe v2</span>
                     </div>
                     <p className="helper-copy">
-                      {speechStatus ||
-                        "When supported by your browser, your words will appear here while you record. You can edit the transcript after saving."}
+                      After recording, ElevenLabs turns your speech into a
+                      transcript. You can review and edit it with your video.
                     </p>
-                    <div className="transcript-preview">
-                      {transcript || (
-                        <span>
-                          Start recording to see your transcript here...
-                        </span>
-                      )}
-                    </div>
                   </section>
                 </div>
                 <aside className="studio-side">
@@ -1093,27 +1586,29 @@ export default function App() {
                       </span>
                       <span className="live-pill">LIVE</span>
                     </div>
-                    <div className="measure-row future">
+                    <div className="measure-row">
                       <span className="measure-icon">
                         <Icon name="heart" size={17} />
                       </span>
                       <span>
                         <strong>Body signals</strong>
-                        <small>Pulse, breathing & expression</small>
+                        <small>Pulse, breathing & camera-facing estimate</small>
                       </span>
-                      <span className="soon-pill">SOON</span>
+                      <span className="panel-tag">AFTER RUN</span>
                     </div>
                     <div className="measure-note">
                       <Icon name="spark" size={17} />
                       <span>
-                        Presage vitals and AI coaching will appear here when
-                        connected.
+                        Presage analyzes the saved video. Longer recordings give
+                        pulse and breathing time to warm up.
                       </span>
                     </div>
                   </section>
                   <section className="panel presage-plan">
-                    <span className="section-eyebrow">PRESAGE ROADMAP</span>
-                    <h3>Body signals to add</h3>
+                    <span className="section-eyebrow">
+                      PRESAGE BODY SIGNALS
+                    </span>
+                    <h3>What to expect</h3>
                     <div>
                       <span>Pulse rate</span>
                       <strong>~12s warm-up</strong>
@@ -1122,14 +1617,9 @@ export default function App() {
                       <span>Breathing rate</span>
                       <strong>~30s warm-up</strong>
                     </div>
-                    <div>
-                      <span>HRV</span>
-                      <strong>~60s warm-up</strong>
-                    </div>
                     <p>
-                      Also planned: expression tracking, breathing and relative
-                      arterial waveforms, confidence scores (0–100), and
-                      measurement stability.
+                      Keep your face and upper chest in frame. Unstable
+                      measurements are excluded from the confidence estimate.
                     </p>
                   </section>
                   <section className="tip-card">
@@ -1144,6 +1634,191 @@ export default function App() {
               </div>
             </>
           )}
+          {page === "recording" &&
+            createPortal(
+              <div className="recording-popout-backdrop">
+                <section
+                  ref={popoutRef}
+                  className="recording-popout"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="recording-popout-title"
+                  aria-describedby="recording-popout-description"
+                  tabIndex={-1}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Escape" &&
+                      !isRecording &&
+                      !isRequesting &&
+                      !isSaving
+                    ) {
+                      event.preventDefault();
+                      navigate("practice");
+                    }
+                  }}
+                >
+                  <header className="recording-popout-header">
+                    <div>
+                      <span className="section-eyebrow">RECORDING STUDIO</span>
+                      <h2 id="recording-popout-title">
+                        {title || "Your practice run"}
+                      </h2>
+                      <p id="recording-popout-description">
+                        Keep your head and upper chest visible in the camera
+                        frame.
+                      </p>
+                    </div>
+                    <button
+                      className="popout-close"
+                      type="button"
+                      aria-label="Close recording window"
+                      onClick={() => navigate("practice")}
+                      disabled={isRecording || isRequesting || isSaving}
+                    >
+                      <Icon name="close" size={20} />
+                    </button>
+                  </header>
+                  {status && (
+                    <div
+                      className="status-banner popout-status-banner"
+                      role="status"
+                    >
+                      <span>{status}</span>
+                      <button
+                        type="button"
+                        aria-label="Dismiss message"
+                        onClick={() => setStatus("")}
+                      >
+                        <Icon name="close" size={16} />
+                      </button>
+                    </div>
+                  )}
+                  <div className="recording-popout-body">
+                    <div className="recording-camera-column">
+                      <div className="recording-popout-toolbar">
+                        <span
+                          className={`record-status ${isRecording ? "recording" : ""}`}
+                        >
+                          <span />
+                          {isRecording
+                            ? "Recording"
+                            : isRequesting
+                              ? "Waiting for permission"
+                              : isSaving
+                                ? "Processing"
+                                : "Camera is off"}
+                        </span>
+                        <span className="framing-label">FRAMING GUIDE</span>
+                      </div>
+                      <div className="camera-stage popout-camera-stage">
+                        <video ref={videoRef} autoPlay muted playsInline />
+                        {isRecording && (
+                          <>
+                            <div
+                              className="chest-framing-guide"
+                              aria-hidden="true"
+                            >
+                              <span>HEAD + UPPER CHEST</span>
+                            </div>
+                            <span className="camera-timer">
+                              <span /> REC {formatDuration(elapsed)}
+                            </span>
+                          </>
+                        )}
+                        {!isRecording && (
+                          <div className="camera-placeholder">
+                            <span className="camera-placeholder-icon">
+                              <Icon name="camera" size={31} />
+                            </span>
+                            <strong>
+                              {isRequesting
+                                ? "Allow access in your browser"
+                                : isSaving
+                                  ? "Saving your recording"
+                                  : "Camera is off"}
+                            </strong>
+                            <span>
+                              {isRequesting
+                                ? "Your browser will ask for camera and microphone permission."
+                                : isSaving
+                                  ? "ElevenLabs, Gemini, and Presage are preparing your results."
+                                  : "Use the button below to try again."}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="recording-popout-footer">
+                        <div className="framing-instruction">
+                          <Icon name="camera" size={18} />
+                          <span>
+                            Position your head and upper chest inside the guide.
+                            This is a visual aid, not a body measurement.
+                          </span>
+                        </div>
+                        {isRecording ? (
+                          <button
+                            className="button button-stop"
+                            onClick={stopRecording}
+                          >
+                            <Icon name="stop" size={17} /> Finish recording
+                          </button>
+                        ) : (
+                          <button
+                            className="button button-primary"
+                            onClick={() => void startRecording()}
+                            disabled={isRequesting || isSaving}
+                          >
+                            <Icon name="video" size={18} />
+                            {isRequesting
+                              ? "Waiting…"
+                              : isSaving
+                                ? "Processing…"
+                                : "Try camera & mic"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <aside className="recording-popout-side">
+                      <section className="popout-side-card">
+                        <span className="section-eyebrow">YOUR WORDS</span>
+                        <h3>Live preview</h3>
+                        <p>
+                          {speechStatus ||
+                            "Browser speech recognition may show a preview. ElevenLabs creates the saved transcript after you finish."}
+                        </p>
+                        <div className="transcript-preview">
+                          {transcript || (
+                            <span>
+                              Your words will appear here if browser speech
+                              recognition is available.
+                            </span>
+                          )}
+                        </div>
+                      </section>
+                      <section className="popout-side-card popout-metrics">
+                        <span className="section-eyebrow">LIVE ESTIMATES</span>
+                        <h3>Speaking insights</h3>
+                        <div className="insight-metric">
+                          <span>Speaking pace</span>
+                          <strong>
+                            {liveMetrics.wordsPerMinute} <small>WPM</small>
+                          </strong>
+                        </div>
+                        <div className="insight-metric">
+                          <span>Filler words</span>
+                          <strong>{liveMetrics.fillerCount}</strong>
+                        </div>
+                        <p>
+                          Final insights use the ElevenLabs transcript and
+                          Gemini analysis.
+                        </p>
+                      </section>
+                    </aside>
+                  </div>
+                </section>
+              </div>,
+              document.body,
+            )}
           {page === "history" && (
             <>
               <div className="page-heading history-heading">
@@ -1216,6 +1891,19 @@ export default function App() {
                           <Icon name="download" size={17} /> Download video
                         </button>
                         <button
+                          onClick={() => void retryTranscription()}
+                          disabled={
+                            !selected.hasRecording ||
+                            isTranscribing ||
+                            isAnalyzing
+                          }
+                        >
+                          <Icon name="mic" size={17} />
+                          {isTranscribing
+                            ? "Transcribing…"
+                            : "Transcribe with ElevenLabs"}
+                        </button>
+                        <button
                           className="danger-action"
                           onClick={removeSelected}
                         >
@@ -1229,6 +1917,15 @@ export default function App() {
                           <span className="section-eyebrow">IN YOUR WORDS</span>
                           <h3>Transcript</h3>
                         </div>
+                        {selected.transcriptSource && (
+                          <span className="panel-tag">
+                            {selected.transcriptSource === "elevenlabs"
+                              ? "ElevenLabs Scribe v2"
+                              : selected.transcriptSource === "browser"
+                                ? "Browser preview"
+                                : "Edited by you"}
+                          </span>
+                        )}
                       </div>
                       <p className="helper-copy">
                         Edit or paste your transcript here. Speech metrics
@@ -1245,7 +1942,9 @@ export default function App() {
                         className="button button-outline"
                         onClick={saveEditedTranscript}
                         disabled={
-                          draftTranscript.trim() === selected.transcript
+                          draftTranscript.trim() === selected.transcript ||
+                          isAnalyzing ||
+                          isTranscribing
                         }
                       >
                         <Icon name="check" size={16} /> Save transcript
@@ -1253,6 +1952,7 @@ export default function App() {
                     </section>
                   </div>
                   <aside className="review-side">
+                    <PracticeProgress session={selected} sessions={sessions} />
                     <section className="panel insights-panel">
                       <div className="panel-header">
                         <div>
@@ -1275,23 +1975,61 @@ export default function App() {
                         <span>Filler words</span>
                         <strong>{selected.fillerCount}</strong>
                       </div>
+                      {selected.fillerWords && (
+                        <div className="filler-list">
+                          {selected.fillerWords.length ? (
+                            selected.fillerWords.map((item) => (
+                              <div
+                                className="filler-row"
+                                key={`${item.kind}-${item.phrase}`}
+                              >
+                                <span>{item.phrase}</span>
+                                <small>
+                                  {item.kind === "repetition"
+                                    ? "Repeated words"
+                                    : "Filler"}
+                                </small>
+                                <strong>×{item.count}</strong>
+                              </div>
+                            ))
+                          ) : (
+                            <p>
+                              Gemini found no filler words in this transcript.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {selected.transcript && (
+                        <button
+                          className="button button-outline analyze-button"
+                          onClick={() => void retryFillerAnalysis()}
+                          disabled={
+                            isAnalyzing ||
+                            isTranscribing ||
+                            draftTranscript.trim() !== selected.transcript
+                          }
+                        >
+                          <Icon name="spark" size={16} />
+                          {isAnalyzing
+                            ? "Analyzing…"
+                            : selected.fillerWords
+                              ? "Reanalyze with Gemini"
+                              : "Analyze fillers with Gemini"}
+                        </button>
+                      )}
                       <div className="insight-note">
                         {selected.wordCount
-                          ? "Metrics are calculated from the transcript and recording length."
+                          ? selected.fillerWords
+                            ? "Gemini uses context to identify filler phrases and repeated words. Speaking pace uses the transcript and recording length."
+                            : "Filler count is a basic local estimate until Gemini analysis is available. Speaking pace uses the transcript and recording length."
                           : "Add a transcript to unlock speech insights."}
                       </div>
                     </section>
-                    <section className="panel future-panel">
-                      <span className="side-icon">
-                        <Icon name="heart" size={20} />
-                      </span>
-                      <h3>Body signals</h3>
-                      <p>
-                        Pulse, HRV, breathing, expression, and confidence are
-                        planned for the Presage integration.
-                      </p>
-                      <span className="soon-pill">COMING SOON</span>
-                    </section>
+                    <VitalSummary
+                      session={selected}
+                      onRetry={() => void retryVitals()}
+                      busy={isAnalyzingVitals}
+                    />
                   </aside>
                 </div>
               ) : (
@@ -1347,7 +2085,9 @@ export default function App() {
             <span>Overview</span>
           </button>
           <button
-            className={page === "practice" ? "active" : ""}
+            className={
+              page === "practice" || page === "recording" ? "active" : ""
+            }
             onClick={() => navigate("practice")}
           >
             <Icon name="video" size={20} />
