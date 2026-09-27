@@ -793,6 +793,10 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (auth.error) setStatus(auth.error);
+  }, [auth.error]);
+
+  useEffect(() => {
     if (auth.loading) return;
     const owner = auth.subject;
     ownerRef.current = owner;

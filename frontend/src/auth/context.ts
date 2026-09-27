@@ -7,6 +7,7 @@ export interface AccountAuth {
   name: string;
   email: string;
   picture: string;
+  error: string | null;
   signIn: (google?: boolean) => Promise<void>;
   signOut: () => void;
   getToken: () => Promise<string>;
@@ -19,6 +20,7 @@ export const unconfigured: AccountAuth = {
   name: "",
   email: "",
   picture: "",
+  error: null,
   signIn: async () => {},
   signOut: () => {},
   getToken: async () => "",

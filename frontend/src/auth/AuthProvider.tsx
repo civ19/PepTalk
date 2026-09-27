@@ -7,6 +7,7 @@ function AuthBridge({ children }: { children: ReactNode }) {
     user,
     isAuthenticated,
     isLoading,
+    error,
     loginWithRedirect,
     logout,
     getAccessTokenSilently,
@@ -18,6 +19,11 @@ function AuthBridge({ children }: { children: ReactNode }) {
     name: user?.name ?? user?.nickname ?? "",
     email: user?.email ?? "",
     picture: user?.picture ?? "",
+    error: error
+      ? /service not found/i.test(error.message)
+        ? "Auth0 rejected the API audience. In Auth0 Dashboard → Applications → APIs, create or select an API and copy its exact Identifier into AUTH0_AUDIENCE and VITE_AUTH0_AUDIENCE. Restart both servers."
+        : `Sign in failed: ${error.message}`
+      : null,
     signIn: async (google = false) => {
       await loginWithRedirect({
         authorizationParams: google ? { connection: "google-oauth2" } : {},

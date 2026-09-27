@@ -156,7 +156,11 @@ export default function accountRoutes(
       }
       console.error("[account]", error);
       res.status(503).json({
-        error: "Account data could not be saved or loaded. Try again.",
+        error: /timeout expired|connection terminated|ETIMEDOUT/i.test(
+          error.message,
+        )
+          ? "Tiger Data connection timed out. Check the database connection and run db:migrate once it is reachable."
+          : "Account data could not be saved or loaded. Try again.",
       });
     },
   );

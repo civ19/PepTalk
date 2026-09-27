@@ -6,6 +6,23 @@ import accountRoutes from "../src/routes/accountRoutes";
 import { migratedDb } from "./helpers";
 
 describe("account routes", () => {
+  it("explains a database connection timeout during account loading", async () => {
+    const repo = new AccountRepository({
+      query: async () => {
+        throw new Error("timeout expired");
+      },
+    });
+    const app = express();
+    app.use(
+      accountRoutes(repo, (req, _res, next) => {
+        Object.assign(req, { auth: { payload: { sub: "alice" } } });
+        next();
+      }),
+    );
+    const response = await request(app).get("/").expect(503);
+    expect(response.body.error).toContain("Tiger Data connection timed out");
+  });
+
   it("uses the verified request subject and rejects preparations under another account's project", async () => {
     const repo = new AccountRepository(await migratedDb());
     const app = express();
