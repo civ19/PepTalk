@@ -356,7 +356,7 @@ function HistoryProgressCharts() {
               axisBottom={{
                 tickSize: 0,
                 tickPadding: 10,
-                format: (value) =>
+                format: (value: number) =>
                   String(value).replace("Run ", "").padStart(2, "0"),
                 legend: "PRACTICE ATTEMPT",
                 legendPosition: "middle",
@@ -366,7 +366,7 @@ function HistoryProgressCharts() {
                 tickSize: 0,
                 tickPadding: 9,
                 tickValues: [0, 25, 50, 75, 100],
-                format: (value) => `${value}%`,
+                format: (value: number) => `${value}%`,
               }}
               enableGridY={false}
               enableGridX={false}
