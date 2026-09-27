@@ -51,6 +51,15 @@ export default function createVitalsRoutes(
     "/",
     raw({ type: ["video/webm", "video/mp4"], limit: "50mb" }),
     async (req, res) => {
+      // Vercel sets VERCEL=1. Presage's native SDK and FFmpeg can't run in its
+      // functions, so say so instead of failing inside the analysis.
+      if (process.env.VERCEL) {
+        res.status(501).json({
+          error:
+            "Presage analysis runs only on the local backend (npm run dev), not on the Vercel deployment.",
+        });
+        return;
+      }
       const mimeType =
         req.header("content-type")?.split(";")[0].toLowerCase() ?? "";
       if (mimeType !== "video/webm" && mimeType !== "video/mp4") {

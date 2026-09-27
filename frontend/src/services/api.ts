@@ -108,7 +108,11 @@ function responseError(result: unknown, status: number): Error {
       ? result.error
       : status >= 500
         ? `Server request failed (${status}). Check that the backend is running and inspect its terminal output.`
-        : `Request failed (${status}).`;
+        : // The local backend takes 50 MB (checked before sending), so this is a host's
+          // limit, like Vercel's ~4 MB per request.
+          status === 413
+          ? "This recording is too large for the hosted server. Run PrepTalk locally (npm run dev) to analyze it."
+          : `Request failed (${status}).`;
   return new Error(message);
 }
 

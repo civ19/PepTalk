@@ -41,6 +41,10 @@ Trust `preptalk-root.crt` using each client's operating system or browser certif
 
 The host's direct `http://<LAN-IP>:5173` URL cannot request camera access in most browsers because camera access requires a secure context. Use the HTTPS URL above, or `http://localhost:5173` when working on the host itself.
 
+## Vercel preview
+
+Vercel serves the frontend and runs the API as a single function (`api/index.ts`, routed by `vercel.json`). It can't analyze recordings: Vercel rejects request bodies over about 4 MB, which most runs exceed, and Presage's native SDK can't run in its functions, so `/api/vitals` answers 501 there. Short runs can still be transcribed. Use `npm run dev` for full analysis; a hosted version needs the backend on a host without these limits, such as the Docker image above.
+
 ## Current recording flow
 
 ```mermaid

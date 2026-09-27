@@ -18,11 +18,24 @@ const SESSION = "6f1c2d3e-5a4b-4c3d-8e2f-1a2b3c4d5e6f";
 
 afterEach(() => {
   delete process.env.SMARTSPECTRA_API_KEY;
+  delete process.env.VERCEL;
   analyzeVideo.mockReset();
   vi.restoreAllMocks();
 });
 
 describe("POST /api/vitals", () => {
+  it("says Presage runs only locally when deployed on Vercel", async () => {
+    process.env.SMARTSPECTRA_API_KEY = "test-key";
+    process.env.VERCEL = "1";
+    const response = await request(app)
+      .post("/api/vitals")
+      .set("Content-Type", "video/webm")
+      .send(Buffer.from("video"));
+    expect(response.status).toBe(501);
+    expect(response.body.error).toMatch(/local backend/);
+    expect(analyzeVideo).not.toHaveBeenCalled();
+  });
+
   it("analyzes a recorded video and returns body signals", async () => {
     process.env.SMARTSPECTRA_API_KEY = "test-key";
     analyzeVideo.mockResolvedValue(result);
