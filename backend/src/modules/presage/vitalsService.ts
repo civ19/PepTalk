@@ -1,7 +1,14 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { decodeMetrics } from "@smartspectra/node-sdk/messages";
+import {
+  FRAME_HEIGHT,
+  FRAME_RATE,
+  FRAME_WIDTH,
+  readFrames,
+} from "./videoFrames";
 
 type Metrics = ReturnType<typeof decodeMetrics>;
 type Measurement = NonNullable<
@@ -30,6 +37,10 @@ const serialize = <T>(job: () => Promise<T>): Promise<T> => {
   pending = result.catch(() => undefined);
   return result;
 };
+
+const TIMEOUT_MS = 180_000;
+// The SDK drops frames it can't keep up with, so only a few are pushed ahead of it.
+const MAX_FRAMES_IN_FLIGHT = 8;
 
 function cameraFacing(
   points: NonNullable<
@@ -69,6 +80,8 @@ export async function analyzeVideo(
   return serialize(async () => {
     const {
       SmartSpectraSDK,
+      FrameTransform,
+      PixelFormat,
       ProcessingStatus,
       breathingMetrics,
       cardioMetrics,
@@ -122,13 +135,11 @@ export async function analyzeVideo(
           });
         }
       };
-      let settled = false;
-      let resolveDone!: () => void;
-      let rejectDone!: (error: Error) => void;
-      const done = new Promise<void>((resolve, reject) => {
-        resolveDone = resolve;
-        rejectDone = reject;
-      });
+      // Set by the SDK's error events or the deadline; stops the frame loop.
+      let failure: Error | undefined;
+      const fail = (error: Error) => {
+        failure ??= error;
+      };
       sdk.on("metrics", (buffer, timestamp) => {
         try {
           const data: Metrics = decodeMetrics(buffer);
@@ -142,52 +153,57 @@ export async function analyzeVideo(
               facing.set(time(Number(landmarks.timestamp)), estimate);
           }
         } catch (error) {
-          if (!settled) {
-            settled = true;
-            rejectDone(
-              error instanceof Error
-                ? error
-                : new Error("Presage metrics could not be decoded."),
-            );
-          }
+          fail(
+            error instanceof Error
+              ? error
+              : new Error("Presage metrics could not be decoded."),
+          );
         }
       });
       sdk.on("validationStatus", (code, _timestamp, hint) => {
         if (code !== 0 && hint) hints.add(hint);
       });
       sdk.on("error", (_code, message) => {
-        if (!settled) {
-          settled = true;
-          rejectDone(
-            new Error(message || "Presage could not analyze the video."),
-          );
-        }
+        fail(new Error(message || "Presage could not analyze the video."));
       });
       sdk.on("processingStatus", (status) => {
-        if (settled) return;
-        if (status === ProcessingStatus.kIdle) {
-          settled = true;
-          resolveDone();
-        } else if (status === ProcessingStatus.kError) {
-          settled = true;
-          rejectDone(new Error("Presage stopped before analysis completed."));
-        }
+        if (status === ProcessingStatus.kError)
+          fail(new Error("Presage stopped before analysis completed."));
       });
-      sdk.useFile(path);
-      sdk.start();
-      const timeout = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          rejectDone(
+      let framesThrough = 0;
+      sdk.on("frameSentThrough", () => {
+        framesThrough++;
+      });
+      const deadline = Date.now() + TIMEOUT_MS;
+      const failed = (): boolean => {
+        if (Date.now() > deadline)
+          fail(
             new Error("Presage analysis timed out. Try a shorter recording."),
           );
-        }
-      }, 180_000);
-      try {
-        await done;
-      } finally {
-        clearTimeout(timeout);
+        return failure !== undefined;
+      };
+      // Decode here and push frames, as the SDK recommends for server-side
+      // use; videoFrames.ts says why its own file reader isn't used.
+      sdk.useCustomInput(FrameTransform.kNone);
+      sdk.start();
+      let framesSent = 0;
+      for await (const frame of readFrames(path)) {
+        while (framesSent - framesThrough >= MAX_FRAMES_IN_FLIGHT && !failed())
+          await delay(2);
+        if (failed()) break;
+        sdk.sendFrame(
+          frame,
+          FRAME_WIDTH,
+          FRAME_HEIGHT,
+          FRAME_WIDTH * 3,
+          PixelFormat.kRGB,
+          Math.round((framesSent * 1_000_000) / FRAME_RATE),
+        );
+        framesSent++;
       }
+      // Drains the pipeline, so the metrics for every pushed frame have arrived.
+      await sdk.stopAsync();
+      if (failure) throw failure;
       const reliableBreaths = [...breathingRate.values()].filter(
         (point) => point.stable && point.confidence >= 60 && point.value > 0,
       );

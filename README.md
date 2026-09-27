@@ -64,7 +64,8 @@ sequenceDiagram
     UI->>Store: Save video in IndexedDB
     UI->>API: POST video to /api/transcriptions
     UI->>API: POST video, session id, and start time to /api/vitals
-    API->>Presage: Analyze video file with server API key
+    API->>API: Decode video to 1280x720 frames with FFmpeg
+    API->>Presage: Push frames with server API key
     Presage-->>API: Pulse, breathing, face landmarks, quality flags
     opt DATABASE_URL is set
         API->>DB: Replace the session's rows in presage_vital_samples
@@ -79,7 +80,7 @@ sequenceDiagram
     UI-->>Speaker: Review video, body signals, and prior attempts
 ```
 
-The dashboard charts speaking pace across saved sessions. Videos can be played, downloaded, or deleted. The upload limit for transcription and Presage analysis is 50 MB each. Gemini uses the transcript for filler words and immediate repetitions; the app still has a basic local count when Gemini is unavailable. Presage runs on the backend using the native Node SDK and processes one recording at a time. Temporary server video files are deleted after processing.
+The dashboard charts speaking pace across saved sessions. Videos can be played, downloaded, or deleted. The upload limit for transcription and Presage analysis is 50 MB each. Gemini uses the transcript for filler words and immediate repetitions; the app still has a basic local count when Gemini is unavailable. Presage runs on the backend using the native Node SDK and processes one recording at a time. The backend decodes each recording with the bundled FFmpeg (`ffmpeg-static`) and pushes its frames to the SDK, scaled to fit 1280x720: the SDK's own file reader can't open videos on Windows, and it misses faces in smaller frames. A fresh `npm ci` downloads FFmpeg because `package.json` approves `ffmpeg-static`'s install script (`allowScripts`). Temporary server video files are deleted after processing.
 
 ## Body signal limits
 
