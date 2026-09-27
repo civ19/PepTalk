@@ -13,6 +13,7 @@ USER node
 COPY --chown=node:node package.json package-lock.json ./
 COPY --chown=node:node backend/package.json ./backend/package.json
 COPY --chown=node:node frontend/package.json ./frontend/package.json
+COPY --chown=node:node scripts ./scripts
 RUN npm ci --no-audit --no-fund
 
 COPY --chown=node:node . .

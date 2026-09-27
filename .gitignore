@@ -7,3 +7,4 @@ data/
 .env.*
 !.env.example
 .DS_Store
+preptalk-root.crt

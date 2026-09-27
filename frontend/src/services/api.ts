@@ -1,4 +1,8 @@
-import type { PracticeSession } from "../types/interview";
+import type {
+  FillerWord,
+  PracticeSession,
+  VitalsResult,
+} from "../types/interview";
 
 const SESSION_KEY = "preptalk.sessions.v1";
 const DB_NAME = "preptalk-recordings";
@@ -74,4 +78,143 @@ export async function deleteRecording(id: string): Promise<void> {
   } finally {
     db.close();
   }
+}
+
+export interface TranscriptionResult {
+  text: string;
+  fillerWords: FillerWord[] | null;
+  analysisError?: string;
+}
+
+function parseFillerWords(value: unknown): FillerWord[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter(
+    (item): item is FillerWord =>
+      item &&
+      typeof item === "object" &&
+      typeof item.phrase === "string" &&
+      Number.isInteger(item.count) &&
+      item.count > 0 &&
+      (item.kind === "filler" || item.kind === "repetition"),
+  );
+}
+
+function responseError(result: unknown, status: number): Error {
+  const message =
+    result &&
+    typeof result === "object" &&
+    "error" in result &&
+    typeof result.error === "string"
+      ? result.error
+      : status >= 500
+        ? `Server request failed (${status}). Check that the backend is running and inspect its terminal output.`
+        : `Request failed (${status}).`;
+  return new Error(message);
+}
+
+export async function transcribeRecording(
+  blob: Blob,
+): Promise<TranscriptionResult> {
+  const mimeType = blob.type.split(";")[0];
+  if (blob.size > 50 * 1024 * 1024) {
+    throw new Error(
+      "This recording is too large to transcribe. Keep runs under 50 MB.",
+    );
+  }
+  if (mimeType !== "video/webm" && mimeType !== "video/mp4") {
+    throw new Error("This browser recorded an unsupported video format.");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch("/api/transcriptions", {
+      method: "POST",
+      headers: { "Content-Type": mimeType },
+      body: blob,
+    });
+  } catch {
+    throw new Error(
+      "The transcription server is unavailable. Your recording is still saved.",
+    );
+  }
+
+  const result: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw responseError(result, response.status);
+  }
+  if (
+    !result ||
+    typeof result !== "object" ||
+    !("text" in result) ||
+    typeof result.text !== "string"
+  ) {
+    throw new Error("The transcription server returned an invalid response.");
+  }
+  return {
+    text: result.text,
+    fillerWords:
+      "fillerWords" in result ? parseFillerWords(result.fillerWords) : null,
+    analysisError:
+      "analysisError" in result && typeof result.analysisError === "string"
+        ? result.analysisError
+        : undefined,
+  };
+}
+
+export async function analyzeTranscript(
+  transcript: string,
+): Promise<FillerWord[]> {
+  let response: Response;
+  try {
+    response = await fetch("/api/filler-analysis", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transcript }),
+    });
+  } catch {
+    throw new Error("The analysis server is unavailable. Try again later.");
+  }
+  const result: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw responseError(result, response.status);
+  const fillers =
+    result && typeof result === "object" && "fillerWords" in result
+      ? parseFillerWords(result.fillerWords)
+      : null;
+  if (!fillers)
+    throw new Error("The analysis server returned an invalid response.");
+  return fillers;
+}
+
+export async function analyzeVitals(blob: Blob): Promise<VitalsResult> {
+  const mimeType = blob.type.split(";")[0];
+  if (blob.size > 50 * 1024 * 1024)
+    throw new Error(
+      "This recording is too large for Presage analysis. Keep runs under 50 MB.",
+    );
+  if (mimeType !== "video/webm" && mimeType !== "video/mp4")
+    throw new Error("This browser recorded an unsupported video format.");
+  let response: Response;
+  try {
+    response = await fetch("/api/vitals", {
+      method: "POST",
+      headers: { "Content-Type": mimeType },
+      body: blob,
+    });
+  } catch {
+    throw new Error(
+      "The Presage server is unavailable. Your recording is still saved.",
+    );
+  }
+  const result: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw responseError(result, response.status);
+  if (
+    !result ||
+    typeof result !== "object" ||
+    !("heartRate" in result) ||
+    !Array.isArray(result.heartRate) ||
+    !("breathingRate" in result) ||
+    !Array.isArray(result.breathingRate)
+  )
+    throw new Error("Presage returned an invalid response.");
+  return result as VitalsResult;
 }
