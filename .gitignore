@@ -1,5 +1,10 @@
 node_modules/
-presage-playground/dist/
+dist/
+coverage/
+data/
+*.log
 .env
 .env.*
 !.env.example
+.DS_Store
+preptalk-root.crt
