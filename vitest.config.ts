@@ -7,6 +7,7 @@ export default defineConfig({
       "backend/test/transcriptionRoutes.test.ts",
       "backend/test/fillerAnalysisRoutes.test.ts",
       "backend/test/vitalsRoutes.test.ts",
+      "backend/test/vitalSamplesRepository.test.ts",
     ],
     exclude: ["**/node_modules/**", "PrepTalk/**"],
   },

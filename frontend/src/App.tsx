@@ -847,7 +847,7 @@ export default function App() {
         );
         const [transcription, bodyAnalysis] = await Promise.allSettled([
           transcribeRecording(blob),
-          analyzeVitals(blob),
+          analyzeVitals(blob, initialSession),
         ]);
         const messages: string[] = [];
         if (transcription.status === "fulfilled") {
@@ -1070,7 +1070,7 @@ export default function App() {
     try {
       const blob = await getRecording(sessionId);
       if (!blob) throw new Error("Recording unavailable in this browser.");
-      const vitals = await analyzeVitals(blob);
+      const vitals = await analyzeVitals(blob, selected);
       commitSessions(
         sessionsRef.current.map((session) =>
           session.id === sessionId ? { ...session, vitals } : session,

@@ -185,7 +185,19 @@ export async function analyzeTranscript(
   return fillers;
 }
 
-export async function analyzeVitals(blob: Blob): Promise<VitalsResult> {
+/** createdAt is stamped when recording stops, so the run started durationSeconds earlier. */
+function sessionStartedAt(
+  session: Pick<PracticeSession, "createdAt" | "durationSeconds">,
+): string {
+  const startedAt =
+    Date.parse(session.createdAt) - session.durationSeconds * 1000;
+  return Number.isFinite(startedAt) ? new Date(startedAt).toISOString() : "";
+}
+
+export async function analyzeVitals(
+  blob: Blob,
+  session: Pick<PracticeSession, "id" | "createdAt" | "durationSeconds">,
+): Promise<VitalsResult> {
   const mimeType = blob.type.split(";")[0];
   if (blob.size > 50 * 1024 * 1024)
     throw new Error(
@@ -197,7 +209,12 @@ export async function analyzeVitals(blob: Blob): Promise<VitalsResult> {
   try {
     response = await fetch("/api/vitals", {
       method: "POST",
-      headers: { "Content-Type": mimeType },
+      headers: {
+        "Content-Type": mimeType,
+        // Lets the backend save the samples to Tiger Data under this session.
+        "X-Session-Id": session.id,
+        "X-Session-Started-At": sessionStartedAt(session),
+      },
       body: blob,
     });
   } catch {

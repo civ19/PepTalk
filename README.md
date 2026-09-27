@@ -1,6 +1,6 @@
 # PrepTalk
 
-PrepTalk helps you rehearse a presentation, pitch, or interview answer. The React app records video in the browser, sends it to the Express backend for an ElevenLabs Scribe v2 transcript and Presage SmartSpectra body signals, then sends the transcript to Gemini for context aware filler word and repeated word analysis. Recordings and session details currently stay in the browser on the device used to record.
+PrepTalk helps you rehearse a presentation, pitch, or interview answer. The React app records video in the browser, sends it to the Express backend for an ElevenLabs Scribe v2 transcript and Presage SmartSpectra body signals, then sends the transcript to Gemini for context aware filler word and repeated word analysis. Recordings and session details stay in the browser on the device used to record. When `DATABASE_URL` is set, the backend also saves each run's Presage body signals to Tiger Data.
 
 ## Run locally
 
@@ -12,6 +12,14 @@ npm run dev
 ```
 
 If you do not already have a root `.env`, copy `.env.example` to `.env`. Add `ELEVENLABS_API_KEY`, `GEMINI_API_KEY`, and `SMARTSPECTRA_API_KEY` before starting the servers. Open `http://localhost:5173`. The backend listens on port 4000; Vite forwards `/api` requests to it. Keep the keys in the root `.env` file, which the backend loads at startup. Restart the backend after changing it. Keys are never needed in frontend environment variables. `GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`.
+
+To save Presage body signals to Tiger Data, set `DATABASE_URL` in `.env` to your Tiger service's connection string (Tiger Console > your service > Connect) and create the table once per database:
+
+```sh
+npm run db:migrate
+```
+
+At startup the backend logs whether it can save to Tiger Data.
 
 Choose **Practice studio**, name a run, and click **Start recording**. The app moves to `/practice/record` and opens a recording popout that uses 96% of the desktop viewport. Its large camera preview includes a visual guide for keeping your head and upper chest in frame; the guide does not detect body position. The browser requests camera and microphone permission, then starts recording after permission is granted. Click **Finish recording** to save the video and open its review. Transcription and Presage analysis run independently in the background. If either fails, the video is still saved locally; retry each step from the review. Browser speech recognition supplies a live preview where supported. Editing a transcript clears its old Gemini result so it can be analyzed again. Use the same practice name and type on later runs to compare attempts. The red, yellow, and green progress bar compares the current practice estimate with the previous attempt. Use the top bar to switch between light and dark blue themes.
 
@@ -29,7 +37,7 @@ Open `https://<DEV_HOST>` from another machine. Caddy serves the frontend and AP
 docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt ./preptalk-root.crt
 ```
 
-Trust `preptalk-root.crt` using each client's operating system or browser certificate settings. Keep this server on a trusted network while developing: the current app has no account login or access control for the transcription endpoint. Docker also starts a TimescaleDB container for future persistence; the current app does not write sessions or videos to it. `docker compose down` stops the containers while retaining the database volume.
+Trust `preptalk-root.crt` using each client's operating system or browser certificate settings. Keep this server on a trusted network while developing: the current app has no account login or access control for the transcription endpoint. Docker also starts a TimescaleDB container. The backend saves Presage body signals to it; create the table once with `docker compose exec app npm run db:migrate`. Sessions and videos are not written to it. `docker compose down` stops the containers while retaining the database volume.
 
 The host's direct `http://<LAN-IP>:5173` URL cannot request camera access in most browsers because camera access requires a secure context. Use the HTTPS URL above, or `http://localhost:5173` when working on the host itself.
 
@@ -45,6 +53,7 @@ sequenceDiagram
     participant Eleven as ElevenLabs Scribe v2
     participant Gemini as Gemini API
     participant Presage as Presage SmartSpectra
+    participant DB as Tiger Data
     Speaker->>UI: Name run and click Start recording
     UI->>UI: Navigate to /practice/record
     UI->>Media: Request camera and microphone access
@@ -54,9 +63,12 @@ sequenceDiagram
     Media-->>UI: WebM or MP4 video
     UI->>Store: Save video in IndexedDB
     UI->>API: POST video to /api/transcriptions
-    UI->>API: POST video to /api/vitals
+    UI->>API: POST video, session id, and start time to /api/vitals
     API->>Presage: Analyze video file with server API key
     Presage-->>API: Pulse, breathing, face landmarks, quality flags
+    opt DATABASE_URL is set
+        API->>DB: Replace the session's rows in presage_vital_samples
+    end
     API-->>UI: Stable samples and camera-facing estimate
     API->>Eleven: Upload media with server API key
     Eleven-->>API: Transcript
@@ -73,7 +85,21 @@ The dashboard charts speaking pace across saved sessions. Videos can be played, 
 
 Presage provides pulse and breathing samples with confidence and stable flags. Review averages and charts include only stable samples with at least 60% measurement confidence. Pulse needs about 12 seconds and breathing about 30 seconds to warm up. Speaking, movement, low light, or hidden chest can reduce breathing quality. “Possible breath interruptions” counts large changes between adjacent reliable breathing-rate readings; it is a review cue, not an apnea diagnosis. The camera-facing percentage is a rough heuristic derived from face and iris landmarks, not a validated eye contact measurement. Interview mode targets more camera-facing time than presentation mode; presentations allow looking at notes or different parts of an audience.
 
-The 0–100 overall confidence estimate combines available filler frequency, speaking pace, camera-facing time, and stable heart and breathing steadiness. Missing factors are omitted and the remaining weights are scaled. Red is below 50, yellow is 50–74, and green is 75 or above. It is a rehearsal aid, not a measure of a person's internal confidence. User login, Tiger Data persistence, and broader Gemini coaching are still future work.
+The 0–100 overall confidence estimate combines available filler frequency, speaking pace, camera-facing time, and stable heart and breathing steadiness. Missing factors are omitted and the remaining weights are scaled. Red is below 50, yellow is 50–74, and green is 75 or above. It is a rehearsal aid, not a measure of a person's internal confidence. User login, saving sessions and videos to Tiger Data, and broader Gemini coaching are still future work.
+
+## Tiger Data
+
+With `DATABASE_URL` set, each Presage analysis is saved to the `presage_vital_samples` hypertable ([backend/db/migrations](backend/db/migrations/)): one row per second of the recording, with heart and breathing rate, confidence, and stable flags. `recorded_at` is the run's start time plus `elapsed_seconds`. Analyzing a run again replaces its rows. Presage rates of 0 are stored as `NULL`. If saving fails, the review still shows the analysis and the backend logs a `[tigerdata]` error.
+
+Tiger Console shows timestamps in UTC. The latest runs:
+
+```sql
+SELECT session_id, count(*) AS samples, min(recorded_at) AS first_sample, max(recorded_at) AS last_sample
+FROM presage_vital_samples
+GROUP BY session_id
+ORDER BY first_sample DESC
+LIMIT 10;
+```
 
 ## Checks
 

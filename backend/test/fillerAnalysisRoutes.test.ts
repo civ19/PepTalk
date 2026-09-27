@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-import app from "../src/app";
+import createApp from "../src/app";
+
+const app = createApp();
 
 afterEach(() => {
   delete process.env.GEMINI_API_KEY;
