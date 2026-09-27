@@ -19,7 +19,7 @@ To save Presage body signals to Tiger Data, set `DATABASE_URL` in `.env` to your
 npm run db:migrate
 ```
 
-### Optional Auth0 sign-in
+### Auth0 sign-in
 
 The SDK is installed as `@auth0/auth0-react` and initialized in `frontend/src/main.tsx`. The root `.env.example` contains this SPA's public settings; copy it to `.env` (or add the same values to your existing root `.env`):
 
@@ -30,7 +30,7 @@ VITE_AUTH0_CLIENT_ID=IABg9tufn4oWH5EjyLUm3L36wKr6l9WE
 
 These are public SPA identifiers, not secrets. In the Auth0 dashboard, open the application and set **Application Type** to **Single Page Application** and **Token Endpoint Authentication Method** to **None**. Add `http://localhost:5173` to each of **Allowed Callback URLs**, **Allowed Logout URLs**, and **Allowed Web Origins**. Add the exact HTTPS origin(s) used for development or deployment to all three settings as well. The callback and logout URLs must match the app origin exactly. Restart the dev server after changing `.env`; `npm run dev` pins Vite to port `5173` and fails if that port is occupied. In Vercel, define both variables in the project's Environment Variables and redeploy.
 
-The sign-in screen offers login and signup through the official SDK, and logout returns to the app origin. When either environment variable is missing, the app remains in local, unauthenticated mode.
+Unauthenticated visits redirect to Auth0 for sign-in. The public identifiers above are also the frontend defaults, so Vercel deployments use Auth0 even when these environment variables are not set; define both variables in Vercel only when using a different Auth0 application. Add each production and preview origin you use to the Auth0 callback, logout, and web-origin allowlists. Logout returns to the app origin.
 
 This is frontend authentication only. No backend code or API authorization is changed, so `/api/*` remains callable without a token and the UI gate can be bypassed. Do not treat this as protection for private data or deploy the API as access-controlled until the backend validates Auth0 access tokens. Sessions and videos remain in browser storage and are not partitioned by Auth0 account; anyone using the same browser profile can access them.
 

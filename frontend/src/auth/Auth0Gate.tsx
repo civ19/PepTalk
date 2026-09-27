@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import App from "../App";
 
@@ -11,6 +12,12 @@ export interface AuthUiState {
 export function Auth0Gate() {
   const { error, isAuthenticated, isLoading, loginWithRedirect, logout, user } =
     useAuth0();
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated && !error) {
+      void loginWithRedirect();
+    }
+  }, [error, isAuthenticated, isLoading, loginWithRedirect]);
 
   if (isLoading) {
     return (
@@ -28,8 +35,8 @@ export function Auth0Gate() {
       <main className="auth-screen">
         <section className="auth-panel">
           <span className="eyebrow">PREPTALK</span>
-          <h1>Welcome back</h1>
-          <p>Sign in to continue to your practice space.</p>
+          <h1>{error ? "Sign in required" : "Redirecting to sign in"}</h1>
+          <p>Continue securely with your PrepTalk account.</p>
           {error && <p className="auth-error">{error.message}</p>}
           <button
             className="button button-primary"
