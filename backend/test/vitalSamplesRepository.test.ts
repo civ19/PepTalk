@@ -37,6 +37,7 @@ describe("toSampleRows", () => {
         expressionStable: null,
         validationCode: null,
         validationHint: null,
+        cameraFacing: null,
       },
       {
         elapsedSeconds: 13,
@@ -51,6 +52,7 @@ describe("toSampleRows", () => {
         expressionStable: null,
         validationCode: null,
         validationHint: null,
+        cameraFacing: null,
       },
     ]);
   });
@@ -76,6 +78,10 @@ describe("toSampleRows", () => {
       durationSeconds: 4,
       heartRate: [point(2, 76, 91)],
       breathingRate: [],
+      cameraFacing: [
+        { timeSeconds: 1, facing: false },
+        { timeSeconds: 2, facing: true },
+      ],
       validation: [
         { timeSeconds: 0, code: 5, hint: "Too dark" },
         { timeSeconds: 2, code: 0, hint: "" },
@@ -85,6 +91,12 @@ describe("toSampleRows", () => {
     expect(rows.map((row) => row.heartRateBpm)).toEqual([null, null, 76, null]);
     expect(rows.map((row) => row.validationCode)).toEqual([5, 5, 0, 0]);
     expect(rows[1].validationHint).toBe("Too dark");
+    expect(rows.map((row) => row.cameraFacing)).toEqual([
+      null,
+      false,
+      true,
+      null,
+    ]);
   });
 });
 
@@ -96,6 +108,7 @@ describe("VitalSamplesRepository", () => {
       durationSeconds: 3,
       heartRate: [point(2, 72, 85)],
       breathingRate: [],
+      cameraFacing: [{ timeSeconds: 1, facing: false }],
       validation: [
         { timeSeconds: 0, code: 5, hint: "Too dark" },
         { timeSeconds: 2, code: 0, hint: "" },
@@ -103,7 +116,7 @@ describe("VitalSamplesRepository", () => {
     });
     expect(written).toBe(3);
     const { rows } = await db.query(
-      "SELECT elapsed_seconds, heart_rate_bpm, validation_code, validation_hint FROM presage_vital_samples ORDER BY elapsed_seconds",
+      "SELECT elapsed_seconds, heart_rate_bpm, validation_code, validation_hint, camera_facing FROM presage_vital_samples ORDER BY elapsed_seconds",
       [],
     );
     expect(rows).toEqual([
@@ -112,18 +125,21 @@ describe("VitalSamplesRepository", () => {
         heart_rate_bpm: null,
         validation_code: 5,
         validation_hint: "Too dark",
+        camera_facing: null,
       },
       {
         elapsed_seconds: 1,
         heart_rate_bpm: null,
         validation_code: 5,
         validation_hint: "Too dark",
+        camera_facing: false,
       },
       {
         elapsed_seconds: 2,
         heart_rate_bpm: 72,
         validation_code: 0,
         validation_hint: null,
+        camera_facing: null,
       },
     ]);
   });

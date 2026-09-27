@@ -49,17 +49,14 @@ export function confidenceFor(session: PracticeSession): ConfidenceResult {
     session.vitals?.cameraFacingPercent != null &&
     session.vitals.cameraFacingSamples >= 5
   ) {
-    const target =
-      session.category === "Interview"
-        ? 65
-        : session.category === "Pitch"
-          ? 45
-          : 30;
     const percent = session.vitals.cameraFacingPercent;
+    const interview = session.category === "Interview";
     factors.push({
       name: "Camera-facing estimate",
-      score: clamp(100 - Math.max(0, target - percent) * 2),
-      weight: session.category === "Interview" ? 25 : 12,
+      score: interview
+        ? clamp(100 - Math.max(0, 65 - percent) * 2)
+        : clamp(100 - Math.max(0, 25 - percent, percent - 85) * 1.5),
+      weight: interview ? 25 : 12,
     });
   }
   const breathing = steadiness(reliable(session.vitals?.breathingRate));

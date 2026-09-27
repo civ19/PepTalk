@@ -48,6 +48,7 @@ export interface VitalsResult {
   expressionShares: ExpressionShare[];
   cameraFacingPercent: number | null;
   cameraFacingSamples: number;
+  cameraFacing: { timeSeconds: number; facing: boolean }[];
   possibleBreathInterruptions: number;
   hints: string[];
 }
@@ -298,6 +299,12 @@ export async function analyzeVideo(
             )
           : null,
         cameraFacingSamples: facing.size,
+        cameraFacing: [...facing]
+          .sort(([a], [b]) => a - b)
+          .map(([timeSeconds, isFacing]) => ({
+            timeSeconds,
+            facing: isFacing,
+          })),
         possibleBreathInterruptions: interruptions,
         hints: [...hints].slice(0, 5),
       };

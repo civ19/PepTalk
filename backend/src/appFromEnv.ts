@@ -6,12 +6,13 @@ import createApp from "./app";
 import { loadRootEnv } from "./env";
 import { createPool, databaseUrlFromEnv } from "./modules/persistence/database";
 import { VitalSamplesRepository } from "./modules/persistence/vitalSamplesRepository";
+import { CoachingFeedbackRepository } from "./modules/persistence/coachingFeedbackRepository";
 
 export function appFromEnv() {
   loadRootEnv();
   const databaseUrl = databaseUrlFromEnv();
-  const vitalSamples = databaseUrl
-    ? new VitalSamplesRepository(createPool(databaseUrl))
-    : null;
-  return { app: createApp({ vitalSamples }), vitalSamples };
+  const pool = databaseUrl ? createPool(databaseUrl) : null;
+  const vitalSamples = pool ? new VitalSamplesRepository(pool) : null;
+  const coachingFeedback = pool ? new CoachingFeedbackRepository(pool) : null;
+  return { app: createApp({ vitalSamples, coachingFeedback }), vitalSamples };
 }

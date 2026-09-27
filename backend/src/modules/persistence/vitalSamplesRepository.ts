@@ -14,6 +14,7 @@ type Readings = Pick<VitalsResult, "heartRate" | "breathingRate"> & {
   expressions?: ExpressionPoint[];
   durationSeconds?: number;
   validation?: ValidationPoint[];
+  cameraFacing?: { timeSeconds: number; facing: boolean }[];
 };
 
 /** An expression_scores entry, in the shape the table already holds: type is Presage's number. */
@@ -37,6 +38,7 @@ export interface VitalSampleRow {
   expressionStable: boolean | null;
   validationCode: number | null;
   validationHint: string | null;
+  cameraFacing: boolean | null;
 }
 
 /** The table's checks reject rates of 0 or below, so those count as no reading. */
@@ -61,6 +63,9 @@ export function toSampleRows(
   const validation = new Map(
     (readings.validation ?? []).map((p) => [p.timeSeconds, p]),
   );
+  const facing = new Map(
+    (readings.cameraFacing ?? []).map((p) => [p.timeSeconds, p.facing]),
+  );
   const duration = readings.durationSeconds;
   const seconds =
     duration === undefined
@@ -70,6 +75,7 @@ export function toSampleRows(
             ...breathing.keys(),
             ...expressions.keys(),
             ...validation.keys(),
+            ...facing.keys(),
           ]),
         ].sort((a, b) => a - b)
       : Array.from(
@@ -83,7 +89,14 @@ export function toSampleRows(
     const b = usable(breathing.get(second));
     const e = expressions.get(second);
     currentValidation = validation.get(second) ?? currentValidation;
-    if (duration === undefined && !h && !b && !e && !currentValidation)
+    if (
+      duration === undefined &&
+      !h &&
+      !b &&
+      !e &&
+      !currentValidation &&
+      !facing.has(second)
+    )
       continue;
     rows.push({
       elapsedSeconds: second,
@@ -105,6 +118,7 @@ export function toSampleRows(
       expressionStable: e ? true : null,
       validationCode: currentValidation?.code ?? null,
       validationHint: currentValidation?.hint || null,
+      cameraFacing: facing.get(second) ?? null,
     });
   }
   return rows;
@@ -139,15 +153,15 @@ export class VitalSamplesRepository {
        INSERT INTO presage_vital_samples
          (session_id, recorded_at, elapsed_seconds, heart_rate_bpm, heart_confidence, heart_stable,
           breathing_rate_bpm, breathing_confidence, breathing_stable, expression_scores, expression_stable,
-          validation_code, validation_hint)
+          validation_code, validation_hint, camera_facing)
        SELECT $1::uuid, t.recorded_at, t.elapsed_seconds, t.heart_rate_bpm, t.heart_confidence, t.heart_stable,
               t.breathing_rate_bpm, t.breathing_confidence, t.breathing_stable, t.expression_scores::jsonb, t.expression_stable,
-              t.validation_code, t.validation_hint
+              t.validation_code, t.validation_hint, t.camera_facing
        FROM unnest($2::timestamptz[], $3::int[], $4::float8[], $5::float8[], $6::bool[],
-                   $7::float8[], $8::float8[], $9::bool[], $10::text[], $11::bool[], $12::int[], $13::text[])
+                   $7::float8[], $8::float8[], $9::bool[], $10::text[], $11::bool[], $12::int[], $13::text[], $14::bool[])
          AS t(recorded_at, elapsed_seconds, heart_rate_bpm, heart_confidence, heart_stable,
               breathing_rate_bpm, breathing_confidence, breathing_stable, expression_scores, expression_stable,
-              validation_code, validation_hint)
+              validation_code, validation_hint, camera_facing)
        ON CONFLICT (session_id, recorded_at) DO UPDATE SET
          elapsed_seconds = EXCLUDED.elapsed_seconds,
          heart_rate_bpm = EXCLUDED.heart_rate_bpm,
@@ -159,7 +173,8 @@ export class VitalSamplesRepository {
          expression_scores = EXCLUDED.expression_scores,
          expression_stable = EXCLUDED.expression_stable,
          validation_code = EXCLUDED.validation_code,
-         validation_hint = EXCLUDED.validation_hint`,
+         validation_hint = EXCLUDED.validation_hint,
+         camera_facing = EXCLUDED.camera_facing`,
       [
         sessionId,
         recordedAt,
@@ -177,6 +192,7 @@ export class VitalSamplesRepository {
         rows.map((row) => row.expressionStable),
         rows.map((row) => row.validationCode),
         rows.map((row) => row.validationHint),
+        rows.map((row) => row.cameraFacing),
       ],
     );
     return rows.length;

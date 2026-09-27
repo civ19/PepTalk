@@ -7,19 +7,24 @@ import {
   analyzeTranscript,
   analyzeVitals,
   deleteAllRecordings,
+  deleteProjectFile,
   deleteRecording,
   getRecording,
   getSavedProjects,
   getSessions,
   saveRecording,
+  saveProjectFile,
   saveProjects,
   saveSessions,
   transcribeRecording,
+  requestCoaching,
 } from "./services/api";
 import type {
   PracticeCategory,
   PracticeProject,
   PracticeSession,
+  ProjectFile,
+  TimedWord,
 } from "./types/interview";
 import { extractMetrics, formatDuration } from "./utils/videoMetrics";
 import { confidenceFor, samePractice } from "./utils/confidence";
@@ -193,7 +198,9 @@ function getSpeechConstructor(): SpeechConstructor | undefined {
   return browser.SpeechRecognition ?? browser.webkitSpeechRecognition;
 }
 
-const categories: PracticeCategory[] = ["Presentation", "Interview", "Pitch"];
+const categories: PracticeCategory[] = ["Presentation", "Interview", "Other"];
+const categoryLabel = (value: PracticeCategory) =>
+  value === "Pitch" ? "Other" : value;
 const dateLabel = (date: string) =>
   new Date(date).toLocaleDateString(undefined, {
     month: "short",
@@ -286,7 +293,7 @@ function SessionRow({
       <span className="session-info">
         <strong>{session.title}</strong>
         <small>
-          {session.category} <span className="dot-sep">·</span>{" "}
+          {categoryLabel(session.category)} <span className="dot-sep">·</span>{" "}
           {dateLabel(session.createdAt)}
         </small>
       </span>
@@ -339,7 +346,9 @@ function ProjectCards({
             onClick={() => onSelect(project.id)}
           >
             <span className="project-card-top">
-              <span className="project-category">{project.category}</span>
+              <span className="project-category">
+                {categoryLabel(project.category)}
+              </span>
               <span>
                 {attempts.length} {attempts.length === 1 ? "run" : "runs"}
               </span>
@@ -603,8 +612,8 @@ function VitalSummary({
         <p>Interview practice uses a stronger camera-facing target (65%).</p>
       ) : (
         <p>
-          {session.category} practice uses a looser camera-facing target.
-          Looking at notes or across an audience is normal.
+          {categoryLabel(session.category)} practice allows natural head
+          movement. Looking at notes or across an audience is normal.
         </p>
       )}
       <p>
@@ -662,6 +671,8 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isAnalyzingVitals, setIsAnalyzingVitals] = useState(false);
+  const [isCoaching, setIsCoaching] = useState(false);
+  const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const saved = localStorage.getItem("preptalk.theme");
     return saved === "light" || saved === "dark"
@@ -678,6 +689,7 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [speechStatus, setSpeechStatus] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playbackRef = useRef<HTMLVideoElement>(null);
   const popoutRef = useRef<HTMLElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -724,6 +736,126 @@ export default function App() {
       return false;
     }
   }, []);
+
+  function updateProject(project: PracticeProject) {
+    const next = [
+      project,
+      ...savedProjects.filter((item) => item.id !== project.id),
+    ];
+    try {
+      saveProjects(next);
+      setSavedProjects(next);
+      return true;
+    } catch {
+      setStatus("Project details could not be saved in this browser.");
+      return false;
+    }
+  }
+
+  async function addProjectFiles(files: FileList | null) {
+    if (!selectedProject || !files?.length) return;
+    const incoming = Array.from(files);
+    const allowed = (file: File) => /\.(pdf|txt|md|csv)$/i.test(file.name);
+    const existing = selectedProject.files ?? [];
+    const total = [
+      ...existing.map((file) => file.size),
+      ...incoming.map((file) => file.size),
+    ].reduce((sum, size) => sum + size, 0);
+    if (
+      incoming.some((file) => !allowed(file)) ||
+      existing.length + incoming.length > 5 ||
+      total > 8 * 1024 * 1024
+    ) {
+      setStatus(
+        "Use up to five PDF or text files totaling 8 MB. Export PowerPoint slides as PDF first.",
+      );
+      return;
+    }
+    setIsUploadingFiles(true);
+    const saved: ProjectFile[] = [];
+    try {
+      for (const file of incoming) saved.push(await saveProjectFile(file));
+      if (
+        !updateProject({ ...selectedProject, files: [...existing, ...saved] })
+      )
+        throw new Error("Project details could not be saved.");
+      setStatus(
+        `${saved.length} project reference ${saved.length === 1 ? "file" : "files"} saved on this device.`,
+      );
+    } catch (error) {
+      await Promise.all(
+        saved.map((file) => deleteProjectFile(file.id).catch(() => undefined)),
+      );
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : "Could not save project files.",
+      );
+    } finally {
+      setIsUploadingFiles(false);
+    }
+  }
+
+  async function removeProjectFile(fileId: string) {
+    if (!selectedProject) return;
+    try {
+      if (
+        !updateProject({
+          ...selectedProject,
+          files: (selectedProject.files ?? []).filter(
+            (file) => file.id !== fileId,
+          ),
+        })
+      )
+        return;
+      await deleteProjectFile(fileId);
+    } catch {
+      setStatus("Could not remove this project file.");
+    }
+  }
+
+  const generateCoaching = useCallback(
+    async (session: PracticeSession, project: PracticeProject) => {
+      setIsCoaching(true);
+      try {
+        const result = await requestCoaching(
+          project,
+          session,
+          sessionsInProject(sessionsRef.current, project.id),
+        );
+        const feedback = {
+          id: result.id,
+          generatedAt: new Date().toISOString(),
+          report: result.report,
+          rawResponse: result.rawResponse,
+        };
+        const saved = commitSessions(
+          sessionsRef.current.map((item) =>
+            item.id === session.id
+              ? {
+                  ...item,
+                  feedbackHistory: [...(item.feedbackHistory ?? []), feedback],
+                }
+              : item,
+          ),
+        );
+        if (saved)
+          setStatus(
+            result.persistenceError ??
+              "Gemini coaching ready. Your earlier feedback is saved with this attempt.",
+          );
+      } catch (error) {
+        setStatus(
+          error instanceof Error
+            ? error.message
+            : "Gemini coaching failed. Try again later.",
+        );
+      } finally {
+        setIsCoaching(false);
+      }
+    },
+    [commitSessions],
+  );
 
   useEffect(() => {
     if (
@@ -1053,6 +1185,7 @@ export default function App() {
         ? "browser"
         : undefined;
       let fillerWords: PracticeSession["fillerWords"];
+      let timedWords: TimedWord[] | undefined;
       let vitals: PracticeSession["vitals"];
       const initialMetrics = extractMetrics(text, durationSeconds);
       const initialSession: PracticeSession = {
@@ -1087,6 +1220,7 @@ export default function App() {
           text = result.text.trim();
           transcriptSource = "elevenlabs";
           fillerWords = result.fillerWords ?? undefined;
+          timedWords = result.timedWords;
           messages.push(
             result.analysisError
               ? `Transcript ready. ${result.analysisError}`
@@ -1114,29 +1248,36 @@ export default function App() {
       const transcriptIsUnchanged =
         sessionsRef.current.find((session) => session.id === id)?.transcript ===
         initialSession.transcript;
-      commitSessions(
-        sessionsRef.current.map((session) =>
-          session.id === id
-            ? {
-                ...session,
-                ...(transcriptIsUnchanged
-                  ? {
-                      transcript: text,
-                      transcriptSource,
-                      wordCount: metrics.wordCount,
-                      wordsPerMinute: metrics.wordsPerMinute,
-                      fillerCount: fillerWords
-                        ? fillerWords.reduce((sum, item) => sum + item.count, 0)
-                        : metrics.fillerCount,
-                      fillerWords,
-                    }
-                  : {}),
-                vitals,
-              }
-            : session,
-        ),
+      const completed = sessionsRef.current.map((session) =>
+        session.id === id
+          ? {
+              ...session,
+              ...(transcriptIsUnchanged
+                ? {
+                    transcript: text,
+                    transcriptSource,
+                    wordCount: metrics.wordCount,
+                    wordsPerMinute: metrics.wordsPerMinute,
+                    fillerCount: fillerWords
+                      ? fillerWords.reduce((sum, item) => sum + item.count, 0)
+                      : metrics.fillerCount,
+                    fillerWords,
+                    timedWords,
+                  }
+                : {}),
+              vitals,
+            }
+          : session,
       );
+      commitSessions(completed);
       if (transcriptIsUnchanged) setDraftTranscript(text);
+      const finalSession = completed.find((session) => session.id === id);
+      if (finalSession && (finalSession.transcript || finalSession.vitals)) {
+        setStatus(
+          "Recording analyzed. Gemini is preparing coaching for this attempt…",
+        );
+        await generateCoaching(finalSession, currentProject);
+      }
     };
     const Speech = getSpeechConstructor();
     if (Speech) {
@@ -1183,6 +1324,7 @@ export default function App() {
     openSession,
     title,
     updateTranscript,
+    generateCoaching,
   ]);
 
   useEffect(() => {
@@ -1221,6 +1363,7 @@ export default function App() {
               wordsPerMinute: metrics.wordsPerMinute,
               fillerCount: metrics.fillerCount,
               fillerWords: undefined,
+              timedWords: undefined,
             }
           : session,
       ),
@@ -1255,6 +1398,7 @@ export default function App() {
                     )
                   : metrics.fillerCount,
                 fillerWords: result.fillerWords ?? undefined,
+                timedWords: result.timedWords,
               }
             : session,
         ),
@@ -1695,8 +1839,8 @@ export default function App() {
                 <div>
                   <strong>Built for more confident speaking</strong>
                   <p>
-                    Practice presentations, pitches, and interviews in one
-                    place.
+                    Practice presentations, interviews, and other speaking tasks
+                    in one place.
                   </p>
                 </div>
                 <button onClick={() => navigate("practice")}>
@@ -1742,14 +1886,14 @@ export default function App() {
                           setProjectId(event.target.value);
                           setCreatingProject(false);
                         }}
-                        disabled={isRecording || isSaving}
+                        disabled={isRecording || isSaving || isUploadingFiles}
                       >
                         {!projects.length && (
                           <option value="">Create your first project</option>
                         )}
                         {projects.map((project) => (
                           <option value={project.id} key={project.id}>
-                            {project.name} · {project.category}
+                            {project.name} · {categoryLabel(project.category)}
                           </option>
                         ))}
                       </select>
@@ -1838,9 +1982,69 @@ export default function App() {
                       time.
                     </p>
                     {selectedProject && (
-                      <p className="project-type">
-                        Practice type: {selectedProject.category}
-                      </p>
+                      <>
+                        <p className="project-type">
+                          Practice type:{" "}
+                          {categoryLabel(selectedProject.category)}
+                        </p>
+                        <div className="project-context">
+                          <label
+                            className="field-label"
+                            htmlFor="project-context-notes"
+                          >
+                            Context for Gemini
+                          </label>
+                          <textarea
+                            id="project-context-notes"
+                            value={selectedProject.contextNotes ?? ""}
+                            maxLength={10000}
+                            placeholder="Role, audience, goals, interview questions, or the idea you are presenting"
+                            onChange={(event) =>
+                              updateProject({
+                                ...selectedProject,
+                                contextNotes: event.target.value,
+                              })
+                            }
+                          />
+                          <label
+                            className="field-label"
+                            htmlFor="project-files"
+                          >
+                            Reference files
+                          </label>
+                          <input
+                            id="project-files"
+                            type="file"
+                            multiple
+                            accept=".pdf,.txt,.md,.csv,application/pdf,text/plain,text/markdown,text/csv"
+                            disabled={isUploadingFiles}
+                            onChange={(event) => {
+                              void addProjectFiles(event.target.files);
+                              event.target.value = "";
+                            }}
+                          />
+                          <p className="helper-copy">
+                            Upload slide decks as PDF, or attach text questions
+                            and proposals. Up to five files, 8 MB total. Files
+                            stay in this browser and are sent to Gemini when you
+                            request feedback.
+                          </p>
+                          {(selectedProject.files ?? []).map((file) => (
+                            <div className="project-file" key={file.id}>
+                              <span>
+                                {file.name} · {(file.size / 1024).toFixed(0)} KB
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void removeProjectFile(file.id)}
+                                aria-label={`Remove ${file.name}`}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </>
                     )}
                   </section>
                   <section className="panel recording-panel">
@@ -2238,7 +2442,7 @@ export default function App() {
                       <div className="review-title">
                         <div>
                           <span className="section-eyebrow">
-                            {selected.category.toUpperCase()} ·{" "}
+                            {categoryLabel(selected.category).toUpperCase()} ·{" "}
                             {dateLabel(selected.createdAt)}
                           </span>
                           <h2>{selected.title}</h2>
@@ -2250,6 +2454,7 @@ export default function App() {
                       </div>
                       {recordingUrl ? (
                         <video
+                          ref={playbackRef}
                           className="playback-video"
                           src={recordingUrl}
                           controls
@@ -2333,6 +2538,143 @@ export default function App() {
                       >
                         <Icon name="check" size={16} /> Save transcript
                       </button>
+                    </section>
+                    <section className="panel coaching-panel">
+                      <div className="panel-header">
+                        <div>
+                          <span className="section-eyebrow">GEMINI COACH</span>
+                          <h3>Advice for this attempt</h3>
+                        </div>
+                      </div>
+                      <p className="helper-copy">
+                        Gemini compares this run with earlier attempts in the
+                        same project and their saved advice. Timed clues are
+                        estimates from speech and Presage signals.
+                      </p>
+                      <button
+                        className="button button-primary"
+                        type="button"
+                        disabled={
+                          isCoaching ||
+                          (!selected.transcript && !selected.vitals) ||
+                          draftTranscript.trim() !== selected.transcript
+                        }
+                        onClick={() => {
+                          const project = projects.find(
+                            (item) => item.id === projectIdFor(selected),
+                          );
+                          if (project) void generateCoaching(selected, project);
+                        }}
+                      >
+                        <Icon name="spark" size={16} />{" "}
+                        {isCoaching
+                          ? "Asking Gemini…"
+                          : selected.feedbackHistory?.length
+                            ? "Get updated advice"
+                            : "Get Gemini advice"}
+                      </button>
+                      {!selected.feedbackHistory?.length && (
+                        <p className="helper-copy">
+                          Save a transcript or analyze body signals to unlock
+                          coaching.
+                        </p>
+                      )}
+                      {[...(selected.feedbackHistory ?? [])]
+                        .reverse()
+                        .map((feedback, index) => (
+                          <details
+                            className="coaching-result"
+                            key={feedback.id}
+                            open={index === 0}
+                          >
+                            <summary>
+                              Advice {index === 0 ? "· latest" : "· earlier"} ·{" "}
+                              {dateLabel(feedback.generatedAt)}
+                            </summary>
+                            <p>{feedback.report.summary}</p>
+                            {feedback.report.strengths.length > 0 && (
+                              <>
+                                <h4>What worked</h4>
+                                <ul>
+                                  {feedback.report.strengths.map(
+                                    (strength, i) => (
+                                      <li key={i}>{strength}</li>
+                                    ),
+                                  )}
+                                </ul>
+                              </>
+                            )}
+                            <h4>What to practice next</h4>
+                            {feedback.report.priorities.map((priority, i) => (
+                              <div className="coaching-priority" key={i}>
+                                <strong>{priority.issue}</strong>
+                                {priority.timestampSeconds !== null &&
+                                  (recordingUrl ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (playbackRef.current) {
+                                          playbackRef.current.currentTime =
+                                            priority.timestampSeconds!;
+                                          void playbackRef.current.play();
+                                        }
+                                      }}
+                                    >
+                                      {formatDuration(
+                                        priority.timestampSeconds,
+                                      )}{" "}
+                                      in video
+                                    </button>
+                                  ) : (
+                                    <span>
+                                      {" "}
+                                      ·{" "}
+                                      {formatDuration(
+                                        priority.timestampSeconds,
+                                      )}{" "}
+                                      in run
+                                    </span>
+                                  ))}
+                                <p>{priority.evidence}</p>
+                                <p>
+                                  <b>Try:</b> {priority.action}
+                                </p>
+                              </div>
+                            ))}
+                            <h4>Since earlier attempts</h4>
+                            <p>{feedback.report.progressComparedToPrevious}</p>
+                            <p>
+                              <b>Estimated practices remaining:</b>{" "}
+                              {
+                                feedback.report.estimatedPracticesRemaining
+                                  .count
+                              }
+                              .{" "}
+                              {
+                                feedback.report.estimatedPracticesRemaining
+                                  .reason
+                              }
+                            </p>
+                            {selected.category === "Interview" &&
+                              feedback.report.suggestedInterviewQuestions
+                                .length > 0 && (
+                                <>
+                                  <h4>Questions to practice</h4>
+                                  <ul>
+                                    {feedback.report.suggestedInterviewQuestions.map(
+                                      (question, i) => (
+                                        <li key={i}>{question}</li>
+                                      ),
+                                    )}
+                                  </ul>
+                                </>
+                              )}
+                            <details>
+                              <summary>Full Gemini response</summary>
+                              <pre>{feedback.rawResponse}</pre>
+                            </details>
+                          </details>
+                        ))}
                     </section>
                   </div>
                   <aside className="review-side">

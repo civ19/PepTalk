@@ -51,6 +51,17 @@ describe("practice confidence estimate", () => {
     const interview = confidenceFor({ ...base, category: "Interview", vitals });
     expect(presentation.factors.at(-1)?.score).toBe(100);
     expect(interview.factors.at(-1)?.score).toBe(50);
+    const fixedGaze = { ...vitals, cameraFacingPercent: 100 };
+    expect(
+      confidenceFor({ ...base, vitals: fixedGaze }).factors.at(-1)?.score,
+    ).toBeLessThan(100);
+    expect(
+      confidenceFor({
+        ...base,
+        category: "Interview",
+        vitals: fixedGaze,
+      }).factors.at(-1)?.score,
+    ).toBe(100);
   });
 
   it("groups repeated attempts by normalized name and type", () => {

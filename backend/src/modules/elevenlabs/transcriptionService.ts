@@ -10,6 +10,7 @@ export class TranscriptionError extends Error {
 export interface TranscriptResult {
   text: string;
   languageCode: string | null;
+  timedWords: { text: string; start: number; end: number }[];
 }
 
 export async function transcribeRecording(
@@ -85,5 +86,25 @@ export async function transcribeRecording(
     "language_code" in data && typeof data.language_code === "string"
       ? data.language_code
       : null;
-  return { text: data.text, languageCode };
+  const timedWords =
+    "words" in data && Array.isArray(data.words)
+      ? data.words.flatMap((word: unknown) => {
+          if (!word || typeof word !== "object") return [];
+          const item = word as Record<string, unknown>;
+          if (
+            typeof item.text !== "string" ||
+            (item.type !== undefined && item.type !== "word") ||
+            !/\p{L}|\p{N}/u.test(item.text) ||
+            typeof item.start !== "number" ||
+            typeof item.end !== "number" ||
+            !Number.isFinite(item.start) ||
+            !Number.isFinite(item.end) ||
+            item.start < 0 ||
+            item.end < item.start
+          )
+            return [];
+          return [{ text: item.text, start: item.start, end: item.end }];
+        })
+      : [];
+  return { text: data.text, languageCode, timedWords };
 }

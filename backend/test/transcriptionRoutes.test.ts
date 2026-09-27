@@ -62,6 +62,7 @@ describe("POST /api/transcriptions", () => {
     expect(response.body).toEqual({
       text: "My presentation starts now, uh.",
       languageCode: "en",
+      timedWords: [],
       fillerWords: [{ phrase: "uh", count: 1, kind: "filler" }],
     });
     const [url, options] = provider.mock.calls[0];

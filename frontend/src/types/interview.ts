@@ -1,16 +1,53 @@
-export type PracticeCategory = "Presentation" | "Interview" | "Pitch";
+export type PracticeCategory = "Presentation" | "Interview" | "Other" | "Pitch";
+
+export interface ProjectFile {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+}
 
 export interface PracticeProject {
   id: string;
   name: string;
   category: PracticeCategory;
   createdAt: string;
+  contextNotes?: string;
+  files?: ProjectFile[];
 }
 
 export interface FillerWord {
   phrase: string;
   count: number;
   kind: "filler" | "repetition";
+}
+
+export interface TimedWord {
+  text: string;
+  start: number;
+  end: number;
+}
+
+export interface CoachingReport {
+  summary: string;
+  strengths: string[];
+  priorities: {
+    issue: string;
+    evidence: string;
+    action: string;
+    timestampSeconds: number | null;
+  }[];
+  progressComparedToPrevious: string;
+  estimatedPracticesRemaining: { count: number; reason: string };
+  suggestedInterviewQuestions: string[];
+}
+
+export interface CoachingFeedback {
+  id: string;
+  generatedAt: string;
+  report: CoachingReport;
+  /** Complete model text, retained so repeat analyses never replace earlier advice. */
+  rawResponse: string;
 }
 
 export interface VitalPoint {
@@ -41,6 +78,7 @@ export interface VitalsResult {
   heartRate: VitalPoint[];
   breathingRate: VitalPoint[];
   validation?: { timeSeconds: number; code: number; hint: string }[];
+  cameraFacing?: { timeSeconds: number; facing: boolean }[];
   /** Missing on sessions analyzed before expressions were measured. */
   dominantExpression?: ExpressionName | null;
   expressionShares?: ExpressionShare[];
@@ -63,6 +101,8 @@ export interface PracticeSession {
   wordsPerMinute: number;
   fillerCount: number;
   fillerWords?: FillerWord[];
+  timedWords?: TimedWord[];
+  feedbackHistory?: CoachingFeedback[];
   hasRecording: boolean;
   vitals?: VitalsResult;
 }
