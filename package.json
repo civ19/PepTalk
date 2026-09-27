@@ -14,6 +14,7 @@
     "prepare": "node scripts/install-hooks.mjs",
     "dev": "concurrently -n BACKEND,FRONTEND -c cyan,magenta \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "build": "npm run build -w backend && npm run build -w frontend",
+    "db:migrate": "npm run db:migrate -w backend",
     "lint": "eslint \"backend/src/**/*.ts\" \"backend/test/**/*.ts\" \"frontend/src/**/*.{ts,tsx}\" \"frontend/test/**/*.{ts,tsx}\"",
     "format": "prettier --write \"backend/{src,test}/**/*.ts\" \"frontend/{src,test}/**/*.{ts,tsx,css}\" \"README.md\"",
     "format:check": "prettier --check \"backend/{src,test}/**/*.ts\" \"frontend/{src,test}/**/*.{ts,tsx,css}\" \"README.md\"",

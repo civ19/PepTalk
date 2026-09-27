@@ -8,6 +8,8 @@ RUN apt-get update \
 WORKDIR /app
 RUN chown node:node /app
 USER node
+# Mount point for compose.yaml's media_data volume; creating it here makes node its owner.
+RUN mkdir -p /home/node/media
 
 # Install from the root workspace lockfile for reproducible Linux binaries.
 COPY --chown=node:node package.json package-lock.json ./

@@ -2,10 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import "./App.css";
 import {
+  appendRecording,
+  createRecordingSession,
   deleteRecording,
+  finishRecording,
   getRecording,
   getSessions,
-  saveRecording,
+  recordingUrl,
   saveSessions,
 } from "./services/api";
 import type { PracticeCategory, PracticeSession } from "./types/interview";
@@ -281,8 +284,9 @@ export default function App() {
   const [sessions, setSessions] = useState<PracticeSession[]>(getSessions);
   const sessionsRef = useRef(sessions);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
-  const [recordingLoading, setRecordingLoading] = useState(false);
+  const [unavailableRecordingId, setUnavailableRecordingId] = useState<
+    string | null
+  >(null);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<PracticeCategory>("Presentation");
   const [isRecording, setIsRecording] = useState(false);
@@ -341,36 +345,6 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [isRecording]);
 
-  useEffect(() => {
-    if (!selected?.hasRecording) {
-      setRecordingUrl(null);
-      setRecordingLoading(false);
-      return;
-    }
-    let active = true;
-    let url: string | null = null;
-    setRecordingLoading(true);
-    getRecording(selected.id)
-      .then((blob) => {
-        if (active && blob) {
-          url = URL.createObjectURL(blob);
-          setRecordingUrl(url);
-        }
-        if (active) setRecordingLoading(false);
-      })
-      .catch(() => {
-        if (active) {
-          setRecordingLoading(false);
-          setStatus("The recording could not be opened from browser storage.");
-        }
-      });
-    return () => {
-      active = false;
-      if (url) URL.revokeObjectURL(url);
-      setRecordingUrl(null);
-    };
-  }, [selected?.id, selected?.hasRecording]);
-
   useEffect(
     () => () => {
       recordingRef.current = false;
@@ -392,6 +366,7 @@ export default function App() {
 
   function openSession(id: string, preserveStatus = false) {
     setSelectedId(id);
+    setUnavailableRecordingId(null);
     const session = sessionsRef.current.find((item) => item.id === id);
     setDraftTranscript(session?.transcript ?? "");
     setPage("history");
@@ -438,7 +413,6 @@ export default function App() {
       videoRef.current.srcObject = stream;
       void videoRef.current.play().catch(() => undefined);
     }
-    const chunks: BlobPart[] = [];
     let recorder: MediaRecorder;
     try {
       const preferred = [
@@ -463,29 +437,57 @@ export default function App() {
     startedAtRef.current = Date.now();
     recordingRef.current = true;
     setIsRecording(true);
+    // Chunks go to the backend in order as they arrive. After a failure the
+    // rest are dropped: a video with a gap in it can't be played.
+    let serverId: string | null = null;
+    let uploadFailed = false;
+    let uploads = createRecordingSession().then(
+      (id) => {
+        serverId = id;
+      },
+      () => {
+        uploadFailed = true;
+      },
+    );
     recorder.ondataavailable = (event) => {
-      if (event.data.size) chunks.push(event.data);
+      const chunk = event.data;
+      if (!chunk.size) return;
+      uploads = uploads.then(async () => {
+        if (!serverId || uploadFailed) return;
+        try {
+          await appendRecording(
+            serverId,
+            chunk,
+            recorder.mimeType || chunk.type || "video/webm",
+          );
+        } catch {
+          uploadFailed = true;
+        }
+      });
     };
     recorder.onstop = async () => {
       const durationSeconds = Math.max(
         1,
         Math.round((Date.now() - startedAtRef.current) / 1000),
       );
-      const id = crypto.randomUUID();
-      const blob = new Blob(chunks, {
-        type: recorder.mimeType || "video/webm",
-      });
+      await uploads;
       let hasRecording = false;
-      try {
-        if (blob.size) {
-          await saveRecording(id, blob);
+      if (serverId && !uploadFailed) {
+        try {
+          await finishRecording(serverId);
           hasRecording = true;
+        } catch {
+          /* Reported below. */
         }
-      } catch {
+      }
+      if (!hasRecording) {
+        // Don't leave a partial video in the media folder.
+        if (serverId) void deleteRecording(serverId).catch(() => undefined);
         setStatus(
-          "Your session was saved, but browser storage could not keep the video.",
+          "Your session was saved, but the video could not be stored on this computer.",
         );
       }
+      const id = serverId ?? crypto.randomUUID();
       const text = transcriptRef.current.trim();
       const metrics = extractMetrics(text, durationSeconds);
       const session: PracticeSession = {
@@ -582,7 +584,7 @@ export default function App() {
     try {
       const blob = await getRecording(selected.id);
       if (!blob) {
-        setStatus("Recording is no longer available in this browser.");
+        setStatus("Recording is no longer available on this computer.");
         return;
       }
       const url = URL.createObjectURL(blob);
@@ -1189,21 +1191,21 @@ export default function App() {
                           {formatDuration(selected.durationSeconds)}
                         </span>
                       </div>
-                      {recordingUrl ? (
+                      {selected.hasRecording &&
+                      unavailableRecordingId !== selected.id ? (
                         <video
                           className="playback-video"
-                          src={recordingUrl}
+                          src={recordingUrl(selected.id)}
                           controls
                           playsInline
+                          onError={() => setUnavailableRecordingId(selected.id)}
                         />
                       ) : (
                         <div className="playback-empty">
                           <Icon name="video" size={27} />
                           <span>
                             {selected.hasRecording
-                              ? recordingLoading
-                                ? "Loading recording…"
-                                : "Recording unavailable in this browser."
+                              ? "Recording unavailable on this computer."
                               : "Video was not saved for this session."}
                           </span>
                         </div>

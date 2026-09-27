@@ -10,6 +10,7 @@ services:
       CHOKIDAR_USEPOLLING: "true"
       DEV_HOST: ${DEV_HOST:-localhost}
       DATABASE_URL: postgres://preptalk:${POSTGRES_PASSWORD:-preptalk}@db:5432/preptalk
+      PREPTALK_MEDIA_DIR: /home/node/media
       SMARTSPECTRA_API_KEY: ${SMARTSPECTRA_API_KEY:-}
     ports:
       - "127.0.0.1:5173:5173"
@@ -19,6 +20,7 @@ services:
       - ./frontend/src:/app/frontend/src:ro
       - ./frontend/index.html:/app/frontend/index.html:ro
       - ./frontend/vite.config.ts:/app/frontend/vite.config.ts:ro
+      - media_data:/home/node/media
     depends_on:
       db:
         condition: service_healthy
@@ -56,5 +58,6 @@ services:
 
 volumes:
   db_data:
+  media_data:
   caddy_data:
   caddy_config:
